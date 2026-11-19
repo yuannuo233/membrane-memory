@@ -116,7 +116,7 @@ Then use `node dist/cli.js <command>`, or `npm link` to get a global `membrane-m
 Grab `membrane-memory-x.y.z.tgz` from [Releases](https://github.com/yuannuo233/membrane-memory/releases), then:
 
 ```bash
-npm install -g ./membrane-memory-0.2.2.tgz
+npm install -g ./membrane-memory-*.tgz   # 换成你下载的实际文件名
 membrane-memory doctor
 ```
 

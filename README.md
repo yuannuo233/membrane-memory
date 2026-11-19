@@ -117,7 +117,7 @@ node dist/cli.js doctor    # 应该全部通过
 `membrane-memory-x.y.z.tgz`，然后：
 
 ```bash
-npm install -g ./membrane-memory-0.2.2.tgz
+npm install -g ./membrane-memory-*.tgz   # 换成你下载的实际文件名
 membrane-memory doctor
 ```
 

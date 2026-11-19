@@ -51,7 +51,7 @@ describe("REST API", () => {
       host: "127.0.0.1",
       port: 8317,
       tokenConfigured: true,
-      version: "0.2.2",
+      version: VERSION,
     });
     const body = res.body as {
       db: { schemaVersion: number };

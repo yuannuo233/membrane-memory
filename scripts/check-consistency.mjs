@@ -77,7 +77,7 @@ FACT.tests = testCount;
 /** 仓库里所有启动脚本（.bat / .cmd / .ps1），逐一检查是否成了孤儿 */
 const trackedScripts = (() => {
   try {
-    const out = execSync('git ls-files "*.bat" "*.cmd" "*.ps1"', {
+    const out = execSync('git -c core.quotepath=false ls-files "*.bat" "*.cmd" "*.ps1"', {
       cwd: root,
       encoding: 'utf8',
     });
