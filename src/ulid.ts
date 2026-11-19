@@ -8,16 +8,11 @@
  * 本项目用单调变体：同一毫秒内多次生成时递增随机位，保证 id 严格递增，
  * 顺序写入不会乱序（取代链的新旧判断多一层保险）。
  */
-import { ulid as ulidBase, monotonicFactory } from "ulid";
-
-/** 直接生成一个 ULID（旧式，等价于每次新随机） */
-export function ulid(): string {
-  return ulidBase();
-}
+import { monotonicFactory } from "ulid";
 
 /**
  * 单调 ULID 工厂：同一毫秒内保持严格递增。
- * Membrane 每个实例持有一个，见 src/membrane.ts。
+ * 引擎每实例持有一个，写入时用它生成 id。
  */
 export function createMonotonicUlid(): (now?: number) => string {
   const factory = monotonicFactory();

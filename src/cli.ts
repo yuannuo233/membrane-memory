@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * CLI 入口。所有接入面的公共底座：
  * - membrane-memory mcp           启动 MCP server（stdio，给 Agent 工具用）
@@ -73,6 +73,21 @@ function opts(args: string[]): { flags: Set<string>; kv: Map<string, string> } {
   return { flags, kv };
 }
 
+/**
+ * 取位置参数（第一个不以 -- 开头、且不是某个选项值的参数）。
+ * 不能简单用 find(!startsWith("--"))——那样 `--kind fact` 里的 `fact` 会被误当成内容。
+ */
+function positional(args: string[]): string | undefined {
+  const valueSet = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    if (args[i]!.startsWith("--")) {
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("--")) valueSet.add(next);
+    }
+  }
+  return args.find((a) => !a.startsWith("--") && !valueSet.has(a));
+}
+
 function parseKind(v: string | undefined): MemoryKind | undefined {
   if (!v) return undefined;
   if (!MEMORY_KINDS.includes(v as MemoryKind)) {
@@ -100,7 +115,7 @@ function main(): void {
   const m = new Membrane({ dbPath });
   try {
     if (cmd === "add") {
-      const content = argv.slice(1).find((a) => !a.startsWith("--"));
+      const content = positional(argv.slice(1));
       if (!content) {
         console.error("请提供记忆内容：membrane-memory add \"用户住在北京\"");
         process.exit(2);
@@ -119,7 +134,7 @@ function main(): void {
       console.log(`  id: ${r.memory.id}`);
       if (r.superseded.length) console.log(`  取代了: ${r.superseded.map((x) => x.id).join(", ")}`);
     } else if (cmd === "search" || cmd === "recall") {
-      const query = argv.slice(1).find((a) => !a.startsWith("--"));
+      const query = positional(argv.slice(1));
       if (!query) {
         console.error("请提供查询：membrane-memory search \"用户住哪\"");
         process.exit(2);

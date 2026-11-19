@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 抽取模式（DESIGN.md 第 7 节）。
  *
  * 直写模式（add）零依赖；本文件是可选的"从大段文本提炼记忆"——
@@ -10,7 +10,7 @@
  */
 import { Membrane } from "./engine.js";
 import { MembraneError, validateKind } from "./model.js";
-import type { ExtractCandidate, ExtractResult, LlmConfig } from "./types.js";
+import type { ExtractCandidate, ExtractResult, LlmConfig, MemoryKind } from "./types.js";
 
 /** 可注入的 fetch 签名（与全局 fetch 兼容） */
 export type FetchLike = (
@@ -33,7 +33,8 @@ export const EXTRACT_SYSTEM_PROMPT = `你是一个记忆抽取助手。从用户
 只输出一个 JSON 数组，不要输出任何解释文字。没有可记住的内容就输出 []。`;
 
 /** 从各种 LLM 返回形态里稳健提取 JSON 数组（容忍 ```json 围栏、前后废话） */
-export function parseCandidates(raw: string): ExtractCandidate[] {  let text = raw.trim();
+export function parseCandidates(raw: string): ExtractCandidate[] {
+  let text = raw.trim();
   // 去掉 markdown 代码围栏
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence?.[1]) text = fence[1].trim();
@@ -120,17 +121,21 @@ export async function extract(
       result.skipped.push({ item: c, reason: "content 缺失或为空" });
       continue;
     }
-    // kind 非法 → 跳过（不因一条脏数据中断整批）
-    try {
-      if (c.kind !== undefined) validateKind(String(c.kind));
-    } catch {
-      result.skipped.push({ item: c, reason: `kind 非法：${String(c.kind)}` });
-      continue;
+    // kind 非法 → 跳过（不因一条脏数据中断整批）；合法则直接沿用
+    let kind: MemoryKind = "fact";
+    if (c.kind !== undefined) {
+      try {
+        validateKind(String(c.kind));
+        kind = c.kind as MemoryKind;
+      } catch {
+        result.skipped.push({ item: c, reason: `kind 非法：${String(c.kind)}` });
+        continue;
+      }
     }
     try {
       const addResult = membrane.add({
         content: c.content,
-        kind: (c.kind as "fact" | "episode" | "preference" | "procedure") ?? "fact",
+        kind,
         subject: c.subject,
         tags: c.tags,
         confidence: c.confidence,

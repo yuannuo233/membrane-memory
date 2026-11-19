@@ -32,7 +32,7 @@ export { handleLine } from "./mcp.js";
 export { runDoctor, formatDoctorReport, writeDoctorReport } from "./doctor.js";
 export type { DoctorReport } from "./doctor.js";
 export { tokenize, tokenizeQuery, buildFtsQuery, tokenSet, containment } from "./tokenize.js";
-export { ulid, createMonotonicUlid } from "./ulid.js";
+export { createMonotonicUlid } from "./ulid.js";
 export {
   DEFAULT_WEIGHTS,
   DEFAULT_HALF_LIVES,

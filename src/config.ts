@@ -22,16 +22,13 @@ export const DEFAULT_HALF_LIVES: Record<MemoryKind, number> = {
 };
 
 /**
- * 冲突检测阈值（DESIGN.md 第 5 节）：
- * - lexical：无 embedding 时用 bigram 包含系数 |A∩B|/min(|A|,|B|)；
- * - vector：有 embedding 时用余弦相似度，量纲不同故阈值独立。
+ * 冲突检测阈值（DESIGN.md 第 5 节）：用 bigram 包含系数 |A∩B|/min(|A|,|B|) 判定。
+ * high 以上取代、mid~high 并存、mid 以下视为不同记忆。
  */
 export const DEFAULT_CONFLICT_THRESHOLDS: {
   lexical: { high: number; mid: number };
-  vector: { high: number; mid: number };
 } = {
   lexical: { high: 0.55, mid: 0.35 },
-  vector: { high: 0.85, mid: 0.6 },
 };
 
 /** 默认冲突策略 */

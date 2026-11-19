@@ -26,12 +26,18 @@ export interface ServerOptions {
 
 type ApiResult = { status?: number; body: unknown };
 
+/**
+ * 统一的 JSON 响应。
+ * CORS 用 `*`：本服务默认只绑 127.0.0.1，跨域风险由网络层兜住；
+ * 绑 0.0.0.0 且配了 token 时，`*` 才能让浏览器类客户端正常调用
+ * （写死 127.0.0.1 会导致远程访问被浏览器 CORS 拦截）。
+ */
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
-    "Access-Control-Allow-Origin": "127.0.0.1",
+    "Access-Control-Allow-Origin": "*",
   });
   res.end(payload);
 }
@@ -40,12 +46,19 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let raw = "";
+    let aborted = false;
     req.setEncoding("utf8");
-    req.on("data", (c) => {
+    req.on("data", (c: string) => {
+      if (aborted) return;
       raw += c;
-      if (raw.length > 1_000_000) reject(new MembraneError("E_BODY", "请求体超过 1MB"));
+      if (raw.length > 1_000_000) {
+        aborted = true;
+        req.destroy(); // 真正中断，别继续占内存
+        reject(new MembraneError("E_BODY", "请求体超过 1MB"));
+      }
     });
     req.on("end", () => {
+      if (aborted) return;
       if (!raw) return resolve({});
       try {
         resolve(JSON.parse(raw) as Record<string, unknown>);
@@ -53,7 +66,9 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
         reject(new MembraneError("E_JSON", "请求体不是合法 JSON"));
       }
     });
-    req.on("error", reject);
+    req.on("error", (e) => {
+      if (!aborted) reject(e);
+    });
   });
 }
 

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 存储层 Storage（DESIGN.md 第 2/3 节）。
  *
  * 选型：Node 内置 `node:sqlite`（DatabaseSync），零原生依赖——决策与理由见
@@ -71,6 +71,7 @@ export interface ListOptions {
 export class Storage {
   private readonly db: DatabaseSync;
   private readonly stmtCache = new Map<string, StatementSync>();
+  /** close 幂等标记 */
   private closed = false;
   /** 事务嵌套深度（0=不在事务中；>0 时内层用 SAVEPOINT） */
   private txDepth = 0;
@@ -257,12 +258,6 @@ export class Storage {
     return row ? rowToRecord(row as Row) : null;
   }
 
-  /** 取代链上游：superseded_by 指向谁（供 get/history 展示链路） */
-  getBySupersededBy(id: string): MemoryRecord | null {
-    const row = this.stmt(`SELECT * FROM memories WHERE superseded_by = ?`).get(id);
-    return row ? rowToRecord(row as Row) : null;
-  }
-
   /**
    * 冲突检测候选：同 (subject, kind) 的现行有效记忆。
    * `subject IS ?` 兼容 NULL（SQLite 的 IS 对 NULL 做相等比较）。
@@ -338,15 +333,6 @@ export class Storage {
   private ftsInsert(rowid: number, content: string): void {
     const indexed = tokenize(content).join(" ");
     this.stmt(`INSERT INTO memory_fts(rowid, content_index) VALUES (?, ?)`).run(rowid, indexed);
-  }
-
-  /** 删除 FTS 索引行（'delete' 命令要求给出与当初索引一致的 token 串） */
-  private ftsDelete(rowid: number, content: string): void {
-    const indexed = tokenize(content).join(" ");
-    this.stmt(`INSERT INTO memory_fts(memory_fts, rowid, content_index) VALUES ('delete', ?, ?)`).run(
-      rowid,
-      indexed,
-    );
   }
 
   /**
@@ -470,8 +456,8 @@ export class Storage {
 
   // ---------- evidence（证据链） ----------
 
-  /** 追加一条 supporting quote（可重复，证据是事实的支撑，允许同句多次观察） */
-  evidenceAdd(memoryId: string, quote: string, at: number): void {
+  /** 追加一条 supporting quote（内部用，证据写入统一走 evidenceReplace） */
+  private evidenceAdd(memoryId: string, quote: string, at: number): void {
     this.stmt(`INSERT INTO evidence (memory_id, quote, created_at) VALUES (?, ?, ?)`).run(
       memoryId,
       quote,
@@ -493,11 +479,6 @@ export class Storage {
     for (const q of quotes) {
       if (q.trim().length > 0) this.evidenceAdd(memoryId, q.trim(), at);
     }
-  }
-
-  /** 删记忆时清理证据（硬删除用） */
-  evidenceDelete(memoryId: string): void {
-    this.stmt(`DELETE FROM evidence WHERE memory_id = ?`).run(memoryId);
   }
 
   /** 所有记忆的证据条数（一次查询，供 recall 打明细，避免 N+1） */
@@ -558,27 +539,9 @@ export class Storage {
     };
   }
 
-  /** 硬删除（物理删行 + FTS/向量清理）。v0.1 的 Forget 走软删除，本方法仅供维护工具使用 */
-  hardDelete(id: string): boolean {
-    const rec = this.get(id);
-    if (!rec) return false;
-    return this.transaction(() => {
-      const row = this.stmt(`SELECT rowid FROM memories WHERE id = ?`).get(id) as
-        | { rowid: number | bigint }
-        | undefined;
-      if (row) this.ftsDelete(Number(row.rowid), rec.content);
-      this.deleteEmbedding(id);
-      this.evidenceDelete(id);
-      const info = this.stmt(`DELETE FROM memories WHERE id = ?`).run(id);
-      return Number(info.changes) === 1;
-    });
-  }
+  // ---------- 生命周期 ----------
 
-  isOpen(): boolean {
-    return !this.closed;
-  }
-
-  /** 关闭数据库（WAL checkpoint 随之完成）；幂等 */
+  /** 关闭数据库（WAL checkpoint 随之完成）；幂等（重复调用不会二次 close） */
   close(): void {
     if (this.closed) return;
     this.closed = true;

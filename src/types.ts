@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Membrane 全局类型定义：记忆模型 / 输入输出 / 配置 / 检索结果。
  *
  * 数据模型与语义见 DESIGN.md 第 3 节（SQLite 建表）与第 4 节（检索算法）。
@@ -170,10 +170,11 @@ export interface RecallOptions {
   queryVec?: Float32Array;
   /**
    * 返回详细程度。默认 "brief"（省 token）；"full" 才带完整 breakdown 与 why。
+   * ultra: 只有 {id, content, score}
    * brief: {id, kind, content, subject, score, validFrom, evidenceCount}
    * full : 完整 memory + breakdown + why（排查/演示用）
    */
-  detail?: "brief" | "full";
+  detail?: "ultra" | "brief" | "full";
 }
 
 /** 精简召回结果（默认返回形态，为省 token 设计） */

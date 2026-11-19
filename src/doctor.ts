@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Doctor 自检（DESIGN.md 第 8 节）——把"数字可复现"落成可执行脚本。
  *
  * 三套剧本，全部确定性（注入固定时钟 + 内存库 + 固定数据）：
@@ -85,17 +85,22 @@ function scenarioStaleUpdate(): DoctorReport["scenarios"]["staleUpdate"] {
     m.add({ content: newText, subject: "用户", kind: "fact", at: T0 + DAY });
     // value-agnostic 查询：用共同部分查，top-1 应返回新值（current@1）
     const hits = m.recall({ query: "用户", limit: 5 });
-    const oldMarker = oldText.slice(-2); // 旧值末尾两字
     const newMarker = newText.slice(-2); // 新值末尾两字
-    if (hits.length > 0 && hits[0]!.memory.content.includes(newMarker) && !hits[0]!.memory.deleted && hits[0]!.memory.validTo === null) {
+    if (
+      hits.length > 0 &&
+      hits[0]!.memory.content.includes(newMarker) &&
+      !hits[0]!.memory.deleted &&
+      hits[0]!.memory.validTo === null
+    ) {
       currentReturned++;
     }
     // contamination：召回的 top-k 里是否混入已被取代的旧版本（valid_to 非空）。
-    // 这是 StaleBench 的关键指标；我们的召回层应过滤掉这些 stale 条目 → 期望 0。
-    const anyStaleInTop5 = hits.some((h) => h.memory.validTo !== null || h.memory.deleted);
-    if (anyStaleInTop5) contaminated5++;
-    const top1 = m.recall({ query: "用户", limit: 1 });
-    if (top1.length > 0 && (top1[0]!.memory.validTo !== null || top1[0]!.memory.deleted)) contaminated1++;
+    // 这是关键指标；我们的召回层应过滤掉这些 stale 条目 → 期望 0。
+    if (hits.some((h) => h.memory.validTo !== null || h.memory.deleted)) contaminated5++;
+    // contam@1 复用同一批结果的第一条，不再单独查一次
+    if (hits.length > 0 && (hits[0]!.memory.validTo !== null || hits[0]!.memory.deleted)) {
+      contaminated1++;
+    }
     m.close();
   }
   const latencyMs = Date.now() - t0;

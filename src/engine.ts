@@ -410,6 +410,8 @@ export class Membrane {
   /**
    * 向量路候选发现：扫当前命名空间下的向量，按余弦取前 poolSize 条。
    * 已在全文候选中出现的记忆跳过（避免重复，排名由 RRF 融合决定）。
+   *
+   * 性能：一次性取该命名空间的现行记忆建索引，避免每条向量单独 get（N+1）。
    */
   private vectorCandidates(
     options: RecallOptions,
@@ -420,15 +422,23 @@ export class Membrane {
     const qv = options.queryVec;
     if (!qv) return [];
     const vecMap = this.storage.getAllEmbeddings();
+    if (vecMap.size === 0) return [];
+
+    // 一次查询拿到候选范围内的全部现行记忆，供后续过滤（避免 N+1）
+    const pool = this.storage.list({
+      validity: "current",
+      namespace,
+      kind: options.kind,
+      subject: options.subject,
+    });
+    const byId = new Map(pool.map((r) => [r.id, r]));
+
     const scored: { record: MemoryRecord; sim: number }[] = [];
     for (const [id, vec] of vecMap) {
       if (exclude.has(id)) continue;
-      const rec = this.storage.get(id);
-      if (!rec || rec.deleted || rec.validTo !== null) continue;
-      if (rec.namespace !== namespace) continue;
-      if (options.kind && rec.kind !== options.kind) continue;
+      const rec = byId.get(id);
+      if (!rec) continue; // 不在候选范围（已删/被取代/跨命名空间/kind 不符）
       if (options.kinds && options.kinds.length > 0 && !options.kinds.includes(rec.kind)) continue;
-      if (options.subject !== undefined && rec.subject !== options.subject) continue;
       if (options.asOf !== undefined && rec.validFrom > options.asOf) continue;
       scored.push({ record: rec, sim: cosine(qv, vec) });
     }
