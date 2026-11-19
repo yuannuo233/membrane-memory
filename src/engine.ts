@@ -16,7 +16,7 @@ import {
   normalizeAddInput,
   normalizeNamespace,
 } from "./model.js";
-import { charCoverage, containment, tokenSet } from "./tokenize.js";
+import { charScore, containment, fuzzyUnits, tokenSet } from "./tokenize.js";
 import { createMonotonicUlid } from "./ulid.js";
 import {
   DEFAULT_CONFLICT_POLICY,
@@ -322,20 +322,40 @@ export class Membrane {
   // ---------- Recall（检索） ----------
 
   /**
-   * read-path 模糊召回：FTS 的 bigram 没命中时，用字符覆盖率扫现行记忆。
+   * read-path 模糊召回：FTS 的 bigram 没命中时，用字符覆盖率找"隔字命中"的记忆。
+   *
+   * 性能：不再全表扫描。先用 char_index 倒排索引捞出"至少命中一个检索单元"的
+   * 记忆（O(命中数)），再对这些候选精确算覆盖率复核。索引在 insert 时同步维护。
+   *
    * 尊重 asOf / kind / subject 过滤（与 searchFtsOnce 的过滤语义一致）。
    * 返回的 bm25 字段存覆盖率的负值（-coverage），供通用排序逻辑复用。
    */
   private fuzzyRecall(options: RecallOptions, poolSize: number, namespace = "default"): FtsHit[] {
-    const all = this.storage.list({ validity: "current", namespace }); // 现行有效（未删、valid_to NULL）
+    const queryUnits = fuzzyUnits(options.query);
+    if (queryUnits.size === 0) return [];
+
+    // 1) 倒排索引取候选（多取一些，因为后面还要按精确覆盖率筛掉一部分）
+    const candidates = this.storage.fuzzyCandidates(
+      [...queryUnits],
+      poolSize * 10,
+      namespace,
+      options.asOf,
+    );
+    if (candidates.length === 0) return [];
+
+    // 2) 批量取记录（一次查询，避免 N+1）
+    const byId = this.storage.getMany(candidates.map((c) => c.id));
+
+    // 3) 精确算覆盖率 + 应用剩余过滤条件（时间过滤已在 SQL 里做过）
     const scored: FtsHit[] = [];
-    for (const rec of all) {
+    for (const { id } of candidates) {
+      const rec = byId.get(id);
+      if (!rec) continue;
       if (options.kind && rec.kind !== options.kind) continue;
       if (options.kinds && options.kinds.length > 0 && !options.kinds.includes(rec.kind)) continue;
       if (options.subject !== undefined && rec.subject !== options.subject) continue;
-      if (options.asOf !== undefined && rec.validFrom > options.asOf) continue;
-      const cov = charCoverage(options.query, rec.content);
-      // 阈值 0.5：查询至少一半字符/词能在记忆里找到，才认定模糊命中。
+      const cov = charScore(queryUnits, rec.content);
+      // 阈值 0.5：查询至少一半检索单元能在记忆里找到，才认定模糊命中。
       // 防止"不存在的词"里"的/词"这类高频单字碰巧命中造成误召回。
       if (cov < 0.5) continue;
       scored.push({ record: rec, bm25: -cov }); // 覆盖率越高 bm25 越小 → 排越前

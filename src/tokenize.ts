@@ -92,31 +92,42 @@ export function containment(a: Set<string>, b: Set<string>): number {
   return inter / Math.min(a.size, b.size);
 }
 
+/** CJK 单字判定（与 RUN_SPLIT 的区段保持一致） */
+const CJK_CHAR = /[\u2E80-\u2EFF\u3000-\u303F\u3040-\u30FF\u3100-\u312F\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/;
+/** 拉丁/数字词 */
+const LATIN_WORD = /[a-z0-9]+/g;
+
 /**
- * 字符覆盖率（read-path resolver 兜底，StaleBench 论文的模糊匹配思路）。
- *
- * 为什么需要：bigram 要求"养猫"在原句里连续出现，但"用户养了一只猫"里
- * "养"和"猫"隔了字，bigram 一个都不匹配 → FTS 漏召回。字符覆盖率不要求相邻：
- * 查询里的每个 CJK 单字只要出现在记忆里就算命中。
- *
- * 返回 0~1：query 中能在 text 里找到的字符比例。
- * 为避免"的/了/用户"这类高频字造成误召回，同时要求至少命中一个"实词字"
- * （这里简化为：覆盖率 × 命中字数，调用方用阈值过滤）。
+ * 把文本拆成"模糊匹配用的检索单元"：
+ * - CJK 按单字（解决"养猫"vs"养了一只猫"的隔字问题）
+ * - 拉丁/数字按整词（"zzzz不存在的词qqqq" 不能被拆成单字母碰巧命中）
+ * 返回去重后的集合，供 charIndex（写入建索引）与 charScore（查询打分）共用。
+ */
+export function fuzzyUnits(text: string): Set<string> {
+  const out = new Set<string>();
+  const lower = text.toLowerCase();
+  for (const c of text) if (CJK_CHAR.test(c)) out.add(c);
+  for (const w of lower.match(LATIN_WORD) ?? []) out.add(w);
+  return out;
+}
+
+/**
+ * 字符覆盖率打分：query 的检索单元有多大比例出现在 text 中。
+ * 返回 0~1。两边都先用 fuzzyUnits 归一化，保证索引与查询口径一致。
+ */
+export function charScore(queryUnits: Set<string>, text: string): number {
+  if (queryUnits.size === 0) return 0;
+  const textUnits = fuzzyUnits(text);
+  let hit = 0;
+  for (const u of queryUnits) if (textUnits.has(u)) hit++;
+  return hit / queryUnits.size;
+}
+
+/**
+ * 字符覆盖率（便捷版：单次比较用）。
+ * 批量场景请用 fuzzyUnits + charScore，避免重复解析查询。
  */
 export function charCoverage(query: string, text: string): number {
-  // CJK：按单字覆盖（解决"养猫"vs"养了一只猫"的隔字问题）
-  const cjkRe = /[\u2E80-\u2EFF\u3000-\u303F\u3040-\u30FF\u3100-\u312F\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/;
-  const qChars = new Set([...query].filter((c) => cjkRe.test(c)));
-  // 拉丁/数字：按完整词匹配（"zzzz不存在的词qqqq" 不能被拆成单字母碰巧命中）
-  const qWords = (query.toLowerCase().match(/[a-z0-9]+/g) ?? []);
-  const total = qChars.size + qWords.length;
-  if (total === 0) return 0;
-
-  const textLower = text.toLowerCase();
-  const textChars = new Set([...text].filter((c) => cjkRe.test(c)));
-  let hit = 0;
-  for (const c of qChars) if (textChars.has(c)) hit++;
-  for (const w of qWords) if (textLower.includes(w)) hit++;
-  return hit / total;
+  return charScore(fuzzyUnits(query), text);
 }
 

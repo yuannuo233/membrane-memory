@@ -220,3 +220,41 @@ describe("insert() 原子性：主表与全文索引不可分", () => {
     }
   });
 });
+
+describe("倒排索引自愈（老库升级后模糊兜底不失效）", () => {
+  it("char_index 为空时，打开库会自动重建", async () => {
+    const dbPath = `${dir}/charidx.db`;
+    const s1 = new Storage(dbPath);
+    s1.insert({
+      id: "c-1", kind: "fact", content: "用户养了一只橘猫", subject: "用户", tags: [],
+      confidence: 1, source: null, namespace: "default",
+      createdAt: BASE_TIME, updatedAt: BASE_TIME, validFrom: BASE_TIME,
+      validTo: null, supersededBy: null, deleted: false, pin: false,
+    });
+    // 模拟老库：清掉索引
+    (s1 as unknown as { db: { exec: (sql: string) => void } }).db.exec("DELETE FROM char_index");
+    const before = (s1 as unknown as { db: { prepare: (s: string) => { get: () => { n: number } } } })
+      .db.prepare("SELECT COUNT(*) AS n FROM char_index").get();
+    expect(Number(before.n)).toBe(0);
+    s1.close();
+
+    // 重新打开 → 应自动重建
+    const s2 = new Storage(dbPath);
+    const after = (s2 as unknown as { db: { prepare: (s: string) => { get: () => { n: number } } } })
+      .db.prepare("SELECT COUNT(*) AS n FROM char_index").get();
+    expect(Number(after.n)).toBeGreaterThan(0);
+    // 模糊检索应能命中
+    const cands = s2.fuzzyCandidates(["养", "猫"], 10, "default");
+    expect(cands.length).toBeGreaterThan(0);
+    s2.close();
+  });
+
+  it("空库不会触发无意义的重建", () => {
+    const dbPath = `${dir}/empty.db`;
+    const s = new Storage(dbPath);
+    const n = (s as unknown as { db: { prepare: (q: string) => { get: () => { n: number } } } })
+      .db.prepare("SELECT COUNT(*) AS n FROM char_index").get();
+    expect(Number(n.n)).toBe(0);
+    s.close();
+  });
+});

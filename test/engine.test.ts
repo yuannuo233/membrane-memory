@@ -322,3 +322,52 @@ describe("混合检索：向量路独立发现候选", () => {
     expect(hits.map((h) => h.memory.id)).not.toContain(b.memory.id);
   });
 });
+
+describe("模糊兜底：倒排索引", () => {
+  it("隔字查询仍能命中（bigram 做不到）", () => {
+    m.add({ content: "用户养了一只橘猫", subject: "用户" });
+    // "养猫" 隔字：bigram 无 "养猫"，FTS 命中不了，靠模糊兜底
+    const hits = m.recall({ query: "养猫" });
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0]!.memory.content).toContain("猫");
+    // 应标记为模糊匹配来源
+    expect(hits[0]!.why).toContain("模糊");
+  });
+
+  it("模糊兜底遵守 namespace 隔离", () => {
+    m.add({ content: "甲的隔字记忆", namespace: "a" });
+    m.add({ content: "乙的隔字记忆", namespace: "b" });
+    const hits = m.recall({ query: "隔记", namespace: "a" });
+    expect(hits.every((h) => h.memory.namespace === "a")).toBe(true);
+  });
+
+  it("模糊兜底不会召回已被取代的旧记忆", () => {
+    m.add({ content: "用户住在北京朝阳", subject: "用户", at: BASE_TIME });
+    m.add({ content: "用户住在上海浦东", subject: "用户", at: BASE_TIME + 1000 });
+    // "朝浦" 是隔字查询，只能靠模糊兜底
+    const hits = m.recall({ query: "朝浦" });
+    expect(hits.every((h) => h.memory.validTo === null)).toBe(true);
+  });
+
+  it("模糊兜底 asOf 历史查询能命中当时有效的记忆", () => {
+    m.add({ content: "用户住在北京朝阳", subject: "用户", at: BASE_TIME });
+    m.add({ content: "用户住在上海浦东", subject: "用户", at: BASE_TIME + 10_000 });
+    const old = m.recall({ query: "朝浦", asOf: BASE_TIME + 5000 });
+    expect(old.some((h) => h.memory.content.includes("北京"))).toBe(true);
+  });
+
+  it("forget 后模糊兜底不再召回", () => {
+    const r = m.add({ content: "待遗忘的隔字记忆", subject: "用户" });
+    expect(m.recall({ query: "待遗" }).length).toBeGreaterThan(0);
+    m.forget(r.memory.id);
+    expect(m.recall({ query: "待遗" })).toHaveLength(0);
+  });
+
+  it("倒排索引与 FTS 口径一致：命中的都是真实包含关系", () => {
+    m.add({ content: "苹果香蕉橘子", subject: "水果" });
+    m.add({ content: "汽车火车飞机", subject: "交通" });
+    const hits = m.recall({ query: "苹蕉" }); // 隔字
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h.memory.content.includes("苹果") || h.memory.content.includes("香蕉"))).toBe(true);
+  });
+});

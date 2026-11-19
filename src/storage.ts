@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { rowToRecord, toRecords, type Row } from "./model.js";
 import { MembraneError } from "./model.js";
-import { buildFtsQuery, tokenize, tokenizeQuery } from "./tokenize.js";
+import { buildFtsQuery, fuzzyUnits, tokenize, tokenizeQuery } from "./tokenize.js";
 import type { HistoryEntry, MemoryKind, MemoryRecord, MembraneStats } from "./types.js";
 
 /** 当前 schema 版本：表结构变更时递增并写迁移逻辑 */
@@ -185,6 +185,14 @@ export class Storage {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_evidence_memory ON evidence(memory_id, seq);
+      -- 模糊检索的倒排索引：单字/词 → 记忆 id。
+      -- 用于 FTS 未命中时的隔字兜底（"养猫" vs "养了一只猫"），避免全表扫描。
+      CREATE TABLE IF NOT EXISTS char_index (
+        unit      TEXT NOT NULL,
+        memory_id TEXT NOT NULL,
+        PRIMARY KEY (unit, memory_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_char_index_memory ON char_index(memory_id);
     `);
     // 向后兼容迁移：老库没有 namespace 列时补上（ALTER TABLE 加列，幂等）。
     // 注意顺序：必须先加列，再建依赖该列的索引——否则老库升级会报 no such column。
@@ -205,6 +213,28 @@ export class Storage {
           `请升级 membrane 或迁移数据文件。`,
       );
     }
+    // 倒排索引自愈：老库升级后 char_index 是空表，模糊兜底会静默失效。
+    // 检测"有记忆但没有索引"就整体重建（幂等，只在新表或损坏时触发）。
+    this.rebuildCharIndexIfNeeded();
+  }
+
+  /**
+   * 检测并修复 char_index：若存在记忆却没有任何索引行，说明是老库升级或索引损坏，
+   * 从 memories 全量重建。正常情况下这里只是一次 COUNT 查询，开销可忽略。
+   */
+  private rebuildCharIndexIfNeeded(): void {
+    const indexed = this.stmt(`SELECT COUNT(*) AS n FROM char_index`).get() as { n: number };
+    if (Number(indexed.n) > 0) return; // 已有索引，无需处理
+    const total = this.stmt(`SELECT COUNT(*) AS n FROM memories`).get() as { n: number };
+    if (Number(total.n) === 0) return; // 空库，无需处理
+
+    this.transaction(() => {
+      const rows = this.stmt(`SELECT id, content FROM memories`).all() as {
+        id: string;
+        content: string;
+      }[];
+      for (const row of rows) this.charIndexInsert(String(row.id), String(row.content));
+    });
   }
 
   /** 确保列存在（老库自动补列，幂等；SQLite 不支持 IF NOT EXISTS 加列，故查 PRAGMA） */
@@ -248,6 +278,7 @@ export class Storage {
       );
       const rowid = Number(info.lastInsertRowid);
       this.ftsInsert(rowid, record.content);
+      this.charIndexInsert(record.id, record.content);
       return rowid;
     });
   }
@@ -283,6 +314,8 @@ export class Storage {
         `取代失败：记忆 ${id} 不存在、已软删除或已被其他记忆取代。`,
       );
     }
+    // 注意：char_index 不在此删除。历史时点查询（asOf）仍可能需要命中旧记忆，
+    // 现行/历史过滤统一由 fuzzyCandidates 的 SQL 条件负责。
   }
 
   /** 软删除（Forget）：deleted=1 且 valid_to=at——asOf 在删除前的时点仍能查到它 */
@@ -295,6 +328,8 @@ export class Storage {
     if (Number(info.changes) !== 1) {
       throw new MembraneError("E_FORGET_RACE", `遗忘失败：记忆 ${id} 不存在或已被删除。`);
     }
+    // 注意：char_index 不在此删除——asOf 历史查询可能仍需命中该记忆（软删除保留底稿）。
+    // 现行/历史过滤由 fuzzyCandidates 的 SQL 条件负责。
   }
 
   /** 列出记忆（默认现行有效；export --all 用 validity='all'） */
@@ -387,6 +422,63 @@ export class Storage {
       record: rowToRecord(row),
       bm25: Number(row["_bm"]),
     }));
+  }
+
+  // ---------- 模糊检索倒排索引（char_index） ----------
+
+  /** 写入一条记忆的模糊检索单元（与 ftsInsert 同一事务，保证一致） */
+  private charIndexInsert(memoryId: string, content: string): void {
+    const stmt = this.stmt(`INSERT OR IGNORE INTO char_index (unit, memory_id) VALUES (?, ?)`);
+    for (const unit of fuzzyUnits(content)) stmt.run(unit, memoryId);
+  }
+
+  /**
+   * 按查询单元批量取候选记忆 id，附命中单元数（用于算覆盖率）。
+   *
+   * 这是模糊兜底的核心：用倒排索引只捞出"至少命中一个单元"的记忆，
+   * 而不是把整个命名空间的记忆全读进内存逐条算（O(n) → O(命中数)）。
+   * 排序在 SQL 里完成（命中单元数降序），调用方只需按覆盖率复核。
+   *
+   * @param asOf 给定时按历史时点语义过滤（与 searchFtsOnce 一致）；缺省只看现行有效
+   */
+  fuzzyCandidates(
+    units: string[],
+    limit: number,
+    namespace = "default",
+    asOf?: number,
+  ): { id: string; hits: number }[] {
+    if (units.length === 0) return [];
+    const placeholders = units.map(() => "?").join(",");
+    const params: (string | number)[] = [...units, namespace];
+    let temporal: string;
+    if (asOf === undefined) {
+      temporal = CURRENT_SQL("m");
+    } else {
+      temporal = "m.valid_from <= ? AND (m.valid_to IS NULL OR m.valid_to > ?) AND m.deleted = 0";
+      params.push(asOf, asOf);
+    }
+    const rows = this.stmt(
+      `SELECT ci.memory_id AS id, COUNT(*) AS hits
+         FROM char_index ci
+         JOIN memories m ON m.id = ci.memory_id
+        WHERE ci.unit IN (${placeholders})
+          AND m.namespace = ?
+          AND ${temporal}
+        GROUP BY ci.memory_id
+        ORDER BY hits DESC
+        LIMIT ?`,
+    ).all(...params, limit) as { id: string; hits: number }[];
+    return rows.map((r) => ({ id: String(r.id), hits: Number(r.hits) }));
+  }
+
+  /** 批量按 id 取记忆（模糊兜底用，避免 N+1） */
+  getMany(ids: string[]): Map<string, MemoryRecord> {
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = this.stmt(`SELECT * FROM memories WHERE id IN (${placeholders})`).all(
+      ...ids,
+    ) as Row[];
+    return new Map(rows.map((r) => [String(r["id"]), rowToRecord(r)]));
   }
 
   // ---------- embeddings（向量缓存，可选） ----------
