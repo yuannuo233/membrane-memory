@@ -88,7 +88,7 @@ Most memory stores return a list of results with no explanation.
 | Search synonyms (unconfigured) | Without an embedding endpoint, stored "Beijing" won't be found by "capital". Set `MEMBRANE_EMBED_MODEL` and you get semantic search |
 | Relational questions in complex sentences | Rules cover 6 patterns (lives in / works or studies at X / A is B's X / A's X is B / likes / dislikes). Annotate `relations` manually for accuracy |
 | Disambiguate entities | "Beijing" is typed as a place by suffix rules, but "Apple" can't be told apart between company and fruit. Type is a hint only |
-| Handle very large scale | Benchmarked only to 100k records; queries that match a large fraction of the corpus are slow (a SQLite FTS5 property) |
+| Handle very large scale | 100k × 1536-dim is stress-tested: LSH vector path ~300ms; millions are unverified. Full-text queries matching a large fraction of the corpus are still slow (a SQLite FTS5 property) |
 | Tokenize Japanese/Korean | Only Chinese and English have been verified |
 
 Full list in the [README's Known Limitations section](README.en.md#known-limitations-read-this-first).
@@ -134,7 +134,7 @@ Other ways to help:
 
 ## Finally
 
-This is a solo-developed early version (v0.2.3, 221 tests, no real-world users yet).
+This is a solo-developed early version (v0.2.5, 222 tests, no real-world users yet).
 It is not perfect, but every number in the docs is something you can verify yourself —
 `membrane-memory doctor` ships with the package, is deterministic, and produces the same
 result on any machine running the same code.

@@ -299,6 +299,11 @@ export interface RecallOptions {
    * 不传则 vec 分量为 0，退化为纯全文检索（零依赖底线不变）。
    */
   queryVec?: Float32Array;
+  /**
+   * 强制精确全扫（默认 false = 大库自动走 LSH 桶索引）。
+   * 用于评测/对账：需要"和暴力搜索完全一致"的 top-K 时打开，代价是 O(N)。
+   */
+  exactVectorSearch?: boolean;
   /** 手动指定查询涉及的实体名（默认由规则从 query 里认） */
   entities?: string[];
   /** 关闭图路（默认开启；没认出实体时本来也不会生效） */

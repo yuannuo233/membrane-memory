@@ -72,6 +72,27 @@ describe("向量：同步写入（预先算好的向量）", () => {
     expect(hits[0]!.breakdown.rrfVec).toBe(1);
   });
 
+  it("LSH 桶索引：200 条向量仍命中目标，且与精确全扫 top-1 一致", () => {
+    const vecOf = (i: number): Float32Array => {
+      const v = new Float32Array(16);
+      let x = (i + 1) * 2654435761 >>> 0;
+      for (let k = 0; k < 16; k++) {
+        x = (x * 1664525 + 1013904223) >>> 0;
+        v[k] = (x / 4294967296) - 0.5;
+      }
+      return v;
+    };
+    const ids: string[] = [];
+    for (let i = 0; i < 200; i++) {
+      ids.push(m.add({ content: `LSH 测试记忆 ${i}`, subject: `用户${i}`, vec: vecOf(i) }).memory.id);
+    }
+    const q = vecOf(100);
+    const fast = m.recall({ query: "zzzz-qwerty", queryVec: q, limit: 5 });
+    const exact = m.recall({ query: "zzzz-qwerty", queryVec: q, limit: 5, exactVectorSearch: true });
+    expect(fast[0]!.memory.id).toBe(ids[100]);
+    expect(exact[0]!.memory.id).toBe(ids[100]);
+  });
+
   it("不传 vec 时 embeddingStatus=none，行为与纯全文完全一致（零依赖底线）", () => {
     const a = m.add({ content: "用户住在北京", subject: "用户" });
     expect(a.embeddingStatus).toBe("none");

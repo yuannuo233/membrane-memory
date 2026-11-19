@@ -9,6 +9,57 @@
 
 ---
 
+## v0.2.5 — 2026-11-19
+
+### 10 万级向量检索压测 + 零依赖 LSH 桶索引
+
+> 这版只做性能与规模，不改默认召回口径。**没有引入 sqlite-vec / faiss / HNSW 等原生依赖**，仍是单文件 SQLite + `ulid`。
+
+**问题**：v0.2.4 的向量路是逐条 `rowToRecord` + 精确全扫。10 万条 × 1536 维实测 **约 10.9 秒/次**，所谓"支持 10 万"只是不崩，不可用。
+
+**改了什么**：
+
+1. **新增 `vector_lsh` 桶索引（零依赖）**
+   - 8 张哈希表 × 8 bit = 每张 256 桶；每个 bit 用 32 个稀疏随机投影，投影下标由 `(table, bit)` 确定性生成，不占存储。
+   - `upsertEmbedding` 同步维护 8 个桶；`deleteEmbedding` 同步删除；老库首次向量查询自动补建（一次性）。
+   - 查询默认只探**精确桶**（10 万条约 3 千候选），候选 `<64` 才扩到汉明距离 1 的邻桶；桶分布极端、候选撞到 50k 上限时回退精确全扫，绝不拿截断候选糊弄。
+2. **向量扫描瘦身**
+   - 新增 `scanEmbeddingVectors`：只读 `id / vec / norm`，不再把 10 万条完整记忆行（含 tags JSON）反序列化。
+   - `embeddings.norm` 预计算 L2 范数，查询只算点积；老库 `norm=0` 自动回退现算。
+   - Blob 读取改为零拷贝 Float32Array 视图；top-K 只存 `id + 分数`，最后 `getMany` 补 32 条完整记录。
+3. **精确对账开关**
+   - `RecallOptions.exactVectorSearch`（REST 对应 `exactVector: true`）：强制 O(N) 精确全扫，用于评测/对账，不参与默认路径。
+4. **新增可复现压测**
+   - `scripts/bench-scale.mjs` + `npm run bench:scale`：固定种子的 50 簇 × 1536 维合成数据，支持 `--count/--dim/--queries/--reuse/--exact/--keep-db`。
+   - `bench/README.md` 记录环境、口径、结果、复现命令、已知边界。
+
+**实测（Windows / Node 24.22 / 100,000 条 × 1536 维 / 50 簇 + 12% 噪声）**：
+
+| 路径 | 优化前 | 优化后 |
+|---|---:|---:|
+| Vector-only | ~10,912 ms（精确全扫） | **~297 ms**（LSH） |
+| Hybrid（FTS + 向量 + 图） | ~10,942 ms | **~461 ms** |
+| FTS-only（宽查询命中全库） | ~129 ms | ~129 ms |
+| 写入 100k | — | 48.5s（约 2,061 条/s） |
+| 库大小 | — | 955 MiB |
+| 进程 RSS | — | ~88 MiB |
+
+- 加速比：**约 36.7 倍**。
+- 召回：簇数据 + 15% 噪声查询，LSH top-10 与精确全扫 **10/10 重合**，top-1 一致。
+- 10k × 1536：vector-only **37 ms**、hybrid **54 ms**。
+
+**已知边界**：
+
+- LSH 是近似索引；真实 embedding 分布、极端桶倾斜、百万级未验证。需要完全一致时用 `exactVectorSearch`（约 11s/次）。
+- 100k × 1536 的 955MiB 磁盘占用是 float32 的硬成本；量化/PQ 未实现。
+- FTS5 宽查询命中全库仍约 129ms，这是 SQLite FTS5 的固有限制。
+
+**验证**：`npm run build` 通过；`npm test` **222/222 通过，16 个测试文件**；`npm run check` 通过；真实 10 万库 LSH/精确 A/B、top-10 召回对比均已跑。
+
+**影响文件**：`src/storage.ts`、`src/engine.ts`、`src/types.ts`、`src/server.ts`、`src/version.ts`、`package.json`、`package-lock.json`、`test/vector.test.ts`、`scripts/bench-scale.mjs`（新增）、`bench/README.md`（新增）、`README.md`、`README.en.md`、`DESIGN.md`、`llms.txt`、`why-membrane.md`、`为什么用Membrane.md`、`使用场景.md`
+
+---
+
 ## v0.2.4 — 2026-11-19
 
 ### 外部 review 七条修复

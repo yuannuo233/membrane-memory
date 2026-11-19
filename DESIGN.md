@@ -121,9 +121,11 @@ CREATE TABLE mcp_clients (
 > 一跳关系就断了。所以 type 只当**属性**，允许从 unknown 升级到具体类型。
 
 > **向量为什么不用 sqlite-vec**：那会破坏"零原生依赖"这个卖点（得装扩展二进制）。
-> 现在 `embeddings` 表存 BLOB，检索时按 `rowid` keyset 分批扫（默认 512 条一批），
-> 调用方只维护 `2×poolSize` 的 top-K 数组逐批剪枝——内存 O(K)，不随库大小增长。
-> 10 万条级别的延迟未压测，这是 v0.2 已知的性能天花板。
+> 现在 `embeddings` 表存 BLOB，并额外维护一张零依赖的 `vector_lsh` 桶索引：
+> 8 张表 × 8 bit，写入时算好桶，查询只读相近桶再精确余弦重排。
+> 10 万条 × 1536 维实测纯向量约 **300ms**、混合约 **460ms**；
+> 精确全扫（`exactVectorSearch`）约 **10.9s**，用于对账而非常规查询。
+> 百万级仍未压测，这是当前已知的规模边界。
 
 > **实现注记（2026-11-19）**：`memory_fts` 采用 FTS5 + 自建 bigram 分词索引——SQLite 内置 `unicode61`
 > 不切中文（整句变成一个 token，等于搜不了中文），`trigram` 又要求查询 ≥3 字。故 FTS 的索引列
@@ -265,11 +267,11 @@ CREATE TABLE mcp_clients (
 - [x] 关系时间感知：记忆被取代/遗忘 → 派生关系 `valid_to` 关闭，不删行，`asOf` 仍可查
 - [x] 断言面扩展：CLI（relations/link/entities/embed-backfill）、MCP（10 工具）、REST（/api/relations、/api/entities）
 - [x] doctor 扩到 5 剧本 7 项检查，原三项数字保持不变（100% / 88% / 0%）
-- 测试：新增 vector 16 + graph 26，累计 **175/175 全绿**（10 个测试文件；v0.2.1 质量版增至 **201/201**，13 个文件；v0.2.2 运维版增至 **210/210**，15 个文件；v0.2.3 审查修复版增至 **221/221**）
+- 测试：新增 vector 16 + graph 26，累计 **175/175 全绿**（10 个测试文件；v0.2.1 质量版增至 **201/201**，13 个文件；v0.2.2 运维版增至 **210/210**，15 个文件；v0.2.3 审查修复版 **221/221**；v0.2.5 规模优化版 **222/222**，16 个文件）
 
-### 当前状态（2026-11-19——M1~M5 + 质量版 + 可观测版 + 审查修复版全部完成，221/221 全绿）
-- ✅ **M1 + M2 + M3(MCP/CLI/REST/UI) + M4 + M5 全部验收**：`npm test` = 构建(tsc)通过 + vitest **221/221 全绿**
-  （model 15 + storage 18 + engine 38 + extract 9 + mcp 10 + server 24 + tenant 10 + robustness 24 + tokenize 4 + vector 16 + graph 26 + portability 8 + mcp-config 7 + update 6 + logger 4 + isolation 2）。
+### 当前状态（2026-11-19——M1~M5 + 质量版 + 可观测版 + 审查修复版 + 规模优化版全部完成，222/222 全绿）
+- ✅ **M1 + M2 + M3(MCP/CLI/REST/UI) + M4 + M5 全部验收**：`npm test` = 构建(tsc)通过 + vitest **222/222 全绿**
+  （model 15 + storage 18 + engine 38 + extract 9 + mcp 10 + server 24 + tenant 10 + robustness 24 + tokenize 4 + vector 17 + graph 26 + portability 8 + mcp-config 7 + update 6 + logger 4 + isolation 2）。
   - MCP server 经**真实子进程端到端验证**（initialize/tools-list/add/recall 全通，退出码 0）——抓到并修复"handleLine 未写 stdout"的真 bug。
   - REST+UI 经**真实 HTTP 端到端验证**（add/recall/stats 全通）——抓到并修复"webDir 用 cwd 导致换目录启动 UI 404"的真 bug。
 - 📋 适配矩阵已核实：zcode（智谱 GLM）、WorkBuddy、DeepSeek Harness、Claude、Cursor/Cline/Windsurf/反重力/AstrBot 等均可用同一 MCP server 接入，见 `适配配置/`。
@@ -285,7 +287,7 @@ CREATE TABLE mcp_clients (
 - 复跑命令：`npm test`（等价于 `tsc -p tsconfig.json && vitest run`）；文档一致性 `npm run check`。
 - ✅ **freshness 已校准**：采用真·半衰期公式 `exp(-ln2·age/halfLife)`，age=halfLife 时=0.5；文档第 4 节与测试同步更新。
 - 仍未做（明确留给 v0.3）：Reflect 周期性巩固、真正的语义级实体消歧（"苹果"公司/水果）、
-  10 万条以上的向量检索压测、sqlite-vec 之类的 ANN 索引（如要引，必须先改第 10 节依赖白名单）。
+  百万级以上的向量检索压测、更成熟的 ANN 索引（当前 LSH 已验证 10 万条；如要引 sqlite-vec/HNSW，必须先改第 10 节依赖白名单）。
 - 环境备忘：Node v24.22.3 已在 `..\tools\nodejs\`（勿重装，node:sqlite 内置可用）；
   存储决策=弃 better-sqlite3 用 node:sqlite（零原生依赖）；npm 缓存必须指向 `tools\npm-cache`。
   npm 新策略会跳过 esbuild 的 postinstall（安全警告），实测不影响 vitest 运行。

@@ -311,6 +311,8 @@ export async function route(
       entities: asStringArray(body.entities),
       hops: asFiniteNumber(body.hops),
       noGraph: asBoolean(body.noGraph),
+      // 评测/对账用：强制精确全扫，关闭 LSH 桶索引
+      exactVectorSearch: asBoolean(body.exactVector),
     });
     // 默认 brief：REST 与 MCP/README 口径一致，避免"省 token"卖点被远程调用打脸
     const detail = asString(body.detail) ?? "brief";

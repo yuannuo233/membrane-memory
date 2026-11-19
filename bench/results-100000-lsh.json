@@ -1,0 +1,27 @@
+{
+  "generatedAt": "2026-11-19T12:20:45.602Z",
+  "count": 100000,
+  "dim": 1536,
+  "queries": 10,
+  "exactVectorSearch": false,
+  "seedSeconds": 0,
+  "seedPerSecond": null,
+  "dbBytes": 1002029056,
+  "ftsOnly": {
+    "avgMs": 125.52005000000004,
+    "p50Ms": 125.44389999999999,
+    "p95Ms": 131.13200000000006
+  },
+  "vectorOnly": {
+    "avgMs": 297.5826399999999,
+    "p50Ms": 294.6190999999999,
+    "p95Ms": 314.59389999999985,
+    "top1Hit": true
+  },
+  "hybrid": {
+    "avgMs": 463.0277799999999,
+    "p50Ms": 452.53469999999925,
+    "p95Ms": 505.9403000000002
+  },
+  "rssBytes": 91238400
+}

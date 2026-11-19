@@ -32,6 +32,17 @@ import type {
 const SCHEMA_VERSION = 2;
 
 /**
+ * 向量桶索引参数（零依赖 LSH）：
+ * - 8 张哈希表，每张 8 bit → 每张 256 个桶；8 张表联合降低"近邻被分错桶"的概率。
+ * - 每个 bit 用 32 个稀疏随机投影（只采样部分维度），写入 10 万条也只多约 2 亿次乘加。
+ * - 查询时每张表先探 1 个精确桶；候选少于 64 条才补 8 个汉明距离 1 的邻桶，兼顾召回与扫描量。
+ */
+const LSH_TABLES = 8;
+const LSH_BITS = 8;
+const LSH_SAMPLES = 32;
+const LSH_PROBE_LIMIT = 50_000;
+
+/**
  * "现行有效"的 SQL 条件（未软删除且未被取代）。
  * 集中一处定义——这是时间感知的核心语义，散落各处最容易改漏。
  * 带表别名时用 CURRENT_SQL("m")。
@@ -130,6 +141,78 @@ function blobToVec(raw: Uint8Array): Float32Array {
   return new Float32Array(ab);
 }
 
+/**
+ * BLOB → Float32Array 的零拷贝视图（只读扫描专用）。
+ *
+ * SQLite 每次查询返回的是独立的 Uint8Array，扫描期间只要不写它，就可以直接
+ * 在它上面建视图。10 万条 × 1536 维时，这一步省掉的是 600MB/次的整块复制。
+ * byteOffset 不是 4 的倍数时（少数驱动实现）退回复制，保证不会抛错。
+ */
+function blobToVecView(raw: Uint8Array): Float32Array {
+  if (raw.byteOffset % 4 === 0 && raw.byteLength % 4 === 0) {
+    return new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4);
+  }
+  return blobToVec(raw);
+}
+
+/** L2 范数（写入时预计算，查询只算点积） */
+function vectorNorm(vec: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < vec.length; i++) {
+    const x = vec[i] ?? 0;
+    sum += x * x;
+  }
+  return Math.sqrt(sum);
+}
+
+/** 线性同余，用于生成稳定的稀疏投影下标 */
+function nextLcg(x: number): number {
+  return (x * 1664525 + 1013904223) >>> 0;
+}
+
+/**
+ * 单张表的 8-bit LSH 桶。
+ * 每个 bit 采样 LSH_SAMPLES 个维度求带符号和；采样点由 (table, bit) 决定，
+ * 因此写入和查询用同一套投影，不需要把随机矩阵存进数据库。
+ */
+function lshBucketFor(vec: Float32Array, table: number): number {
+  let bucket = 0;
+  for (let bit = 0; bit < LSH_BITS; bit++) {
+    let seed = (table * 0x9e3779b9 + bit * 0x85ebca6b + 0x1234567) >>> 0;
+    let score = 0;
+    for (let k = 0; k < LSH_SAMPLES; k++) {
+      seed = nextLcg(seed);
+      const idx = seed % vec.length;
+      seed = nextLcg(seed);
+      const sign = (seed & 1) === 0 ? 1 : -1;
+      score += sign * (vec[idx] ?? 0);
+    }
+    if (score >= 0) bucket |= 1 << bit;
+  }
+  return bucket;
+}
+
+/** 一条向量的 8 张表桶号 */
+function lshBuckets(vec: Float32Array): number[] {
+  const out: number[] = [];
+  for (let table = 0; table < LSH_TABLES; table++) out.push(lshBucketFor(vec, table));
+  return out;
+}
+
+/** 查询探针：默认只探精确桶；候选太少时再扩到 8 个汉明距离 1 的邻桶 */
+function lshProbes(vec: Float32Array, neighbors = false): { table: number; bucket: number }[] {
+  const out: { table: number; bucket: number }[] = [];
+  for (let table = 0; table < LSH_TABLES; table++) {
+    const base = lshBucketFor(vec, table);
+    out.push({ table, bucket: base });
+    if (!neighbors) continue;
+    for (let bit = 0; bit < LSH_BITS; bit++) {
+      out.push({ table, bucket: base ^ (1 << bit) });
+    }
+  }
+  return out;
+}
+
 /** 实体行 → 领域对象 */
 function rowToEntity(row: Row): GraphEntity {
   return {
@@ -178,6 +261,8 @@ export class Storage {
   private closed = false;
   /** 事务嵌套深度（0=不在事务中；>0 时内层用 SAVEPOINT） */
   private txDepth = 0;
+  /** LSH 索引是否已确认可用（只查一次计数，避免每次查询都 COUNT） */
+  private lshReady = false;
   /** 数据库文件路径（:memory: 表示内存库） */
   readonly path: string;
 
@@ -275,7 +360,10 @@ export class Storage {
       CREATE TABLE IF NOT EXISTS embeddings (
         id  TEXT PRIMARY KEY,
         dim INTEGER NOT NULL,
-        vec BLOB NOT NULL
+        vec BLOB NOT NULL,
+        -- 预计算 L2 范数：查询时只算点积，避免每条候选重复求范数。
+        -- 老库没有该列时由下面的 ensureColumn 补 0，读到 0 会回退到现算。
+        norm REAL NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS history (
         seq       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -289,6 +377,15 @@ export class Storage {
         key   TEXT PRIMARY KEY,
         value TEXT
       );
+      -- 向量桶索引：memory_id ↔ (表号, 桶号)。8 张表，每张 8 bit。
+      -- 目的：10 万条时不必把 600MB 向量全读一遍，只扫相近桶里的候选再做精确余弦。
+      CREATE TABLE IF NOT EXISTS vector_lsh (
+        memory_id TEXT NOT NULL,
+        table_id  INTEGER NOT NULL,
+        bucket    INTEGER NOT NULL,
+        PRIMARY KEY (memory_id, table_id)
+      ) WITHOUT ROWID;
+      CREATE INDEX IF NOT EXISTS idx_vector_lsh_bucket ON vector_lsh(table_id, bucket);
       -- 证据链：一条记忆可有多条 supporting quote。独立表，不动主表 → 零迁移。
       CREATE TABLE IF NOT EXISTS evidence (
         seq       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -358,6 +455,7 @@ export class Storage {
     // 向后兼容迁移：老库没有 namespace 列时补上（ALTER TABLE 加列，幂等）。
     // 注意顺序：必须先加列，再建依赖该列的索引——否则老库升级会报 no such column。
     this.ensureColumn("memories", "namespace", "TEXT NOT NULL DEFAULT 'default'");
+    this.ensureColumn("embeddings", "norm", "REAL NOT NULL DEFAULT 0");
     this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_memories_ns ON memories(namespace, deleted, valid_to);`,
     );
@@ -645,13 +743,20 @@ export class Storage {
 
   // ---------- embeddings（向量缓存，可选） ----------
 
-  /** 写/刷新一条记忆的向量（Float32 存 BLOB） */
+  /** 写/刷新一条记忆的向量（Float32 存 BLOB，范数一并预计算，同时维护 LSH 桶） */
   upsertEmbedding(id: string, vec: Float32Array): void {
     const blob = Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength);
     this.stmt(
-      `INSERT INTO embeddings (id, dim, vec) VALUES (?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET dim = excluded.dim, vec = excluded.vec`,
-    ).run(id, vec.length, blob);
+      `INSERT INTO embeddings (id, dim, vec, norm) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET dim = excluded.dim, vec = excluded.vec, norm = excluded.norm`,
+    ).run(id, vec.length, blob, vectorNorm(vec));
+    const buckets = lshBuckets(vec);
+    for (let table = 0; table < LSH_TABLES; table++) {
+      this.stmt(
+        `INSERT INTO vector_lsh (memory_id, table_id, bucket) VALUES (?, ?, ?)
+         ON CONFLICT(memory_id, table_id) DO UPDATE SET bucket = excluded.bucket`,
+      ).run(id, table, buckets[table]!);
+    }
   }
 
   getEmbedding(id: string): Float32Array | null {
@@ -672,8 +777,9 @@ export class Storage {
     return map;
   }
 
-  /** 删除记忆时同步清理向量缓存 */
+  /** 删除记忆时同步清理向量缓存与桶索引 */
   deleteEmbedding(id: string): void {
+    this.stmt(`DELETE FROM vector_lsh WHERE memory_id = ?`).run(id);
     this.stmt(`DELETE FROM embeddings WHERE id = ?`).run(id);
   }
 
@@ -718,6 +824,37 @@ export class Storage {
   }
 
   /**
+   * 向量扫描的公共过滤条件（命名空间/时点/kind/subject）。
+   * 两条扫描路径共用，避免过滤口径漂移——一方改了另一方没改，就会出现
+   * "召回有结果但预览没有"的灵异 bug。
+   */
+  private embeddingScanFilter(options: VectorScanOptions): {
+    where: string;
+    params: (string | number | null)[];
+  } {
+    const where: string[] = ["m.namespace = ?"];
+    const params: (string | number | null)[] = [options.namespace];
+    const temporal = memoryTemporalSql("m", options.asOf);
+    where.push(temporal.sql);
+    params.push(...temporal.params);
+    if (options.kind) {
+      where.push("m.kind = ?");
+      params.push(options.kind);
+    } else if (options.kinds && options.kinds.length > 0) {
+      where.push(`m.kind IN (${options.kinds.map(() => "?").join(",")})`);
+      params.push(...options.kinds);
+    }
+    if (options.subject !== undefined) {
+      if (options.subject === null) where.push("m.subject IS NULL");
+      else {
+        where.push("m.subject = ?");
+        params.push(options.subject);
+      }
+    }
+    return { where: where.join(" AND "), params };
+  }
+
+  /**
    * 分批扫描向量（向量检索的**内存可控**实现）。
    *
    * 为什么不是 getAllEmbeddings：1000 条 × 1536 维 float32 ≈ 6MB 还行，
@@ -732,33 +869,15 @@ export class Storage {
     onBatch: (items: { record: MemoryRecord; vec: Float32Array }[]) => void,
   ): void {
     const batch = options.batchSize && options.batchSize > 0 ? options.batchSize : 512;
-    const where: string[] = ["e.rowid > ?", "m.namespace = ?"];
-    const base: (string | number | null)[] = [0, options.namespace];
-    const temporal = memoryTemporalSql("m", options.asOf);
-    where.push(temporal.sql);
-    base.push(...temporal.params);
-    if (options.kind) {
-      where.push("m.kind = ?");
-      base.push(options.kind);
-    } else if (options.kinds && options.kinds.length > 0) {
-      where.push(`m.kind IN (${options.kinds.map(() => "?").join(",")})`);
-      base.push(...options.kinds);
-    }
-    if (options.subject !== undefined) {
-      if (options.subject === null) where.push("m.subject IS NULL");
-      else {
-        where.push("m.subject = ?");
-        base.push(options.subject);
-      }
-    }
+    const filter = this.embeddingScanFilter(options);
     const sql = `SELECT m.*, e.vec AS _vec, e.rowid AS _erowid
                  FROM embeddings e JOIN memories m ON m.id = e.id
-                 WHERE ${where.join(" AND ")}
+                 WHERE e.rowid > ? AND ${filter.where}
                  ORDER BY e.rowid ASC
                  LIMIT ?`;
     let last = 0;
     while (true) {
-      const rows = this.stmt(sql).all(last, ...base.slice(1), batch) as Row[];
+      const rows = this.stmt(sql).all(last, ...filter.params, batch) as Row[];
       if (rows.length === 0) return;
       const items: { record: MemoryRecord; vec: Float32Array }[] = [];
       for (const row of rows) {
@@ -770,6 +889,132 @@ export class Storage {
       onBatch(items);
       if (rows.length < batch) return;
     }
+  }
+
+  /**
+   * 只扫 `id + vec + norm` 的轻量版，专供向量 top-K。
+   *
+   * 和 scanEmbeddings 的区别：不 join 出 m.*、不解析 tags JSON、不构造 MemoryRecord。
+   * 10 万条时这一步省掉的是"10 万个对象 + 10 万次 JSON.parse"，
+   * 真正需要完整记录时只对 top-K（通常 32 条）调 getMany 补一次。
+   */
+  scanEmbeddingVectors(
+    options: VectorScanOptions,
+    onBatch: (items: { id: string; vec: Float32Array; norm: number }[]) => void,
+  ): void {
+    const batch = options.batchSize && options.batchSize > 0 ? options.batchSize : 1024;
+    const filter = this.embeddingScanFilter(options);
+    const sql = `SELECT e.id AS _id, e.vec AS _vec, e.norm AS _norm, e.rowid AS _erowid
+                 FROM embeddings e JOIN memories m ON m.id = e.id
+                 WHERE e.rowid > ? AND ${filter.where}
+                 ORDER BY e.rowid ASC
+                 LIMIT ?`;
+    let last = 0;
+    while (true) {
+      const rows = this.stmt(sql).all(last, ...filter.params, batch) as Row[];
+      if (rows.length === 0) return;
+      const items: { id: string; vec: Float32Array; norm: number }[] = [];
+      for (const row of rows) {
+        const raw = row["_vec"];
+        if (!(raw instanceof Uint8Array)) continue;
+        const norm = Number(row["_norm"]);
+        items.push({
+          id: String(row["_id"]),
+          vec: blobToVecView(raw),
+          // 老库 norm 列刚补上时为 0，交给调用方回退现算
+          norm: Number.isFinite(norm) && norm > 0 ? norm : 0,
+        });
+      }
+      last = Number(rows[rows.length - 1]!["_erowid"]);
+      onBatch(items);
+      if (rows.length < batch) return;
+    }
+  }
+
+  /**
+   * 确保 LSH 桶索引可用。
+   * 新写入会即时维护；老库（升级前没有索引）在第一次向量查询时按 embeddings 全量补建。
+   * 只检查一次：单进程内写入都走 upsertEmbedding，索引不会自己过期。
+   */
+  ensureVectorLshIndex(): void {
+    if (this.lshReady) return;
+    const total = Number((this.stmt(`SELECT COUNT(*) AS n FROM embeddings`).get() as { n: number }).n);
+    if (total === 0) {
+      this.lshReady = true;
+      return;
+    }
+    const indexed = Number(
+      (this.stmt(`SELECT COUNT(*) AS n FROM vector_lsh`).get() as { n: number }).n,
+    );
+    if (indexed >= total * LSH_TABLES) {
+      this.lshReady = true;
+      return;
+    }
+    this.transaction(() => {
+      this.stmt(`DELETE FROM vector_lsh`).run();
+      const rows = this.stmt(`SELECT id, vec FROM embeddings`).all() as {
+        id: string;
+        vec: Uint8Array;
+      }[];
+      for (const row of rows) {
+        const vec = blobToVec(row.vec);
+        const buckets = lshBuckets(vec);
+        for (let table = 0; table < LSH_TABLES; table++) {
+          this.stmt(
+            `INSERT INTO vector_lsh (memory_id, table_id, bucket) VALUES (?, ?, ?)`,
+          ).run(String(row.id), table, buckets[table]!);
+        }
+      }
+    });
+    this.lshReady = true;
+  }
+
+  /**
+   * 按查询向量探桶，返回候选记忆 id（已按命名空间/时点/kind/subject 过滤）。
+   * 返回空数组表示索引不可用或桶为空，调用方应回退到精确全扫，不能当作"无结果"。
+   */
+  lshCandidateIds(options: VectorScanOptions, queryVec: Float32Array): string[] {
+    this.ensureVectorLshIndex();
+    const filter = this.embeddingScanFilter(options);
+    const query = (probes: { table: number; bucket: number }[]): string[] => {
+      const where = probes.map(() => `(l.table_id = ? AND l.bucket = ?)`).join(" OR ");
+      const sql = `SELECT DISTINCT l.memory_id AS _id
+                   FROM vector_lsh l JOIN memories m ON m.id = l.memory_id
+                   WHERE (${where}) AND ${filter.where}
+                   LIMIT ?`;
+      const params: (string | number | null)[] = [];
+      for (const p of probes) params.push(p.table, p.bucket);
+      params.push(...filter.params, LSH_PROBE_LIMIT);
+      const rows = this.stmt(sql).all(...params) as { _id: string }[];
+      return rows.map((r) => String(r._id));
+    };
+
+    // 先探精确桶：10 万条时通常 3 千条左右，足够 top-K 精确重排。
+    const exact = query(lshProbes(queryVec));
+    // 命中 LIMIT 说明桶分布严重不均，截断后的候选不可信 → 交给调用方精确全扫
+    if (exact.length >= LSH_PROBE_LIMIT) return [];
+    if (exact.length >= 64) return exact;
+    // 候选太少（小库或桶太偏）才扩到邻桶，避免为了省一点扫描量牺牲召回。
+    return query(lshProbes(queryVec, true));
+  }
+
+  /** 按 id 批量取向量 + 预计算范数（LSH 候选重排用，零拷贝视图） */
+  getEmbeddingVectorsByIds(ids: string[]): Map<string, { vec: Float32Array; norm: number }> {
+    const out = new Map<string, { vec: Float32Array; norm: number }>();
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const rows = this.stmt(
+        `SELECT id, vec, norm FROM embeddings WHERE id IN (${chunk.map(() => "?").join(",")})`,
+      ).all(...chunk) as { id: string; vec: Uint8Array; norm: number }[];
+      for (const row of rows) {
+        const norm = Number(row.norm);
+        out.set(String(row.id), {
+          vec: blobToVecView(row.vec),
+          norm: Number.isFinite(norm) && norm > 0 ? norm : 0,
+        });
+      }
+    }
+    return out;
   }
 
   // ---------- entities / relations（图检索） ----------

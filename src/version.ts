@@ -6,4 +6,4 @@
  * 其余文件只允许 import VERSION；scripts/check-consistency.mjs 会校验
  * 它和 package.json 是否一致。
  */
-export const VERSION = "0.2.4";
+export const VERSION = "0.2.5";

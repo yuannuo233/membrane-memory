@@ -31,3 +31,4 @@ reports/
 .tmp-*.txt
 .msg.txt
 .*-msg.txt
+.bench/

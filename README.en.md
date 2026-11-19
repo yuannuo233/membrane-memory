@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.2.4-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.5-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
@@ -30,7 +30,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 > `membrane-memory serve` (the optional web console) renders in one. Skip it and you lose
 > nothing functionally.
 
-> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 221 tests (verified live by CI), **no real-world users yet**.
+> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 222 tests (verified live by CI), **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
 > We do **not** chase "number one on benchmarks" — that is exactly how comparable projects fell from grace.
 
@@ -55,10 +55,11 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Item | Current state | Risk |
 |---|---|---|
-| **No real-world users yet** | All 221 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
+| **No real-world users yet** | All 222 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
 | **Tasks share memory within one namespace** | Only `namespace` isolation; no automatic `task_id`; task memories in one namespace become candidates together | Use `task-<id>` per task, see the isolation section above |
 | **Cross-process concurrency = WAL only** | SQLite single-writer; concurrent writers queue | Fine for personal use; a bottleneck under load |
-| **Performance tested only to 1,000 records** | Writes/queries in seconds at 1k | 100k+ not stress-tested |
+| **Performance stress-tested only to 100k records** | 100k × 1536-dim: ~300ms pure vector, ~460ms hybrid (LSH bucket index) | Millions, real embedding distributions, and extreme bucket skew are unverified; use `exactVectorSearch` for exact parity |
+| **The default vector index is approximate** | At 100k scale, LSH buckets keep top-1 stable; extreme bucket skew may miss some neighbors | When exact parity with brute force is required, enable `exactVectorSearch` (~11s/query) or run `bench-scale` to audit |
 | **Doctor sample is tiny** | 5 recall cases / 8 update pairs | **Regression self-check, not a benchmark** — not a basis for cross-project comparison |
 | **Solo maintainer** | No team, no SLA | Issues may take days |
 | **Weights/half-lives are guesses** | 0.4/0.3/0.2/0.1/0.1 and 90/14/365/60 days are untuned | You may need to tune for your workload |
@@ -103,7 +104,7 @@ Requires **Node ≥ 24**. Reason: the built-in `node:sqlite` is experimental in 
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # dev dependencies only (typescript/vitest/tsx); the only runtime dep is ulid
-npm test           # all pass (221 cases at the moment)
+npm test           # all pass (222 cases at the moment)
 npm run build
 node dist/cli.js doctor    # should report all checks passed
 ```
