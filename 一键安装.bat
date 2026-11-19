@@ -1,78 +1,140 @@
 @echo off
 chcp 936 >nul
-title Membrane 记忆脑 一键安装
-setlocal
+title Membrane ?????? - ??????
+setlocal enabledelayedexpansion
 
-echo ============================================
-echo   Membrane 记忆脑 - 一键安装
-echo   时间感知 / 本地优先 / 可解释 的 Agent 记忆
-echo ============================================
-echo.
+REM ============================================================
+REM  Membrane ?????? - ??????
+REM  ·???????λ??%~dp0??????д??????????????????
+REM  ?汾???? node ???????д???????? set /p????? for /f ???????壩
+REM ============================================================
 
-set "NODE=E:\开源盛世\tools\nodejs\node.exe"
-set "NPMCMD=E:\开源盛世\tools\nodejs\npm.cmd"
-set "MEMDIR=E:\开源盛世\membrane"
+set "MEMDIR=%~dp0"
+if "%MEMDIR:~-1%"=="\" set "MEMDIR=%MEMDIR:~0,-1%"
 set "DATADIR=%MEMDIR%\data"
 set "DBPATH=%DATADIR%\membrane.db"
+set "VER=δ?"
 
-echo [1/4] 检查 Node 是否就绪...
-if not exist "%NODE%" (
-    echo   错误：没找到 node.exe：%NODE%
-    echo   请确认 tools\nodejs 目录存在。
+echo ============================================
+echo   Membrane ?????? - ??????
+echo   ????? / ???????? / ????? ?? Agent ????
+echo ============================================
+echo.
+
+REM ---------- 1. ?? node ----------
+echo [1/5] ??? Node.js ...
+set "NODE="
+where node >nul 2>nul && set "NODE=node"
+
+if not defined NODE (
+    if exist "%MEMDIR%\..\tools\nodejs\node.exe" set "NODE=%MEMDIR%\..\tools\nodejs\node.exe"
+)
+if not defined NODE (
+    if exist "%ProgramFiles%\nodejs\node.exe" set "NODE=%ProgramFiles%\nodejs\node.exe"
+)
+if not defined NODE (
+    if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" set "NODE=%LOCALAPPDATA%\Programs\nodejs\node.exe"
+)
+
+if not defined NODE (
+    echo   [X] ????? Node.js
+    echo.
+    echo   ?????? Node.js 24 ?????汾??
+    echo       https://nodejs.org
+    echo.
     goto :fail
 )
-echo   OK：%NODE%
 
-echo.
-echo [2/4] 建立数据目录...
-if not exist "%DATADIR%" mkdir "%DATADIR%"
-echo   OK：%DATADIR%
+for /f "tokens=*" %%v in ('"%NODE%" --version 2^>nul') do set "NODEVER=%%v"
+echo   OK??%NODE%
+echo        Node ?汾??%NODEVER%
 
-echo.
-echo [3/4] 编译源码（生成 dist 目录）...
+REM ---------- ???汾?? ----------
 cd /d "%MEMDIR%"
-set "NPM_CONFIG_CACHE=E:\开源盛世\tools\npm-cache"
-set "PATH=E:\开源盛世\tools\nodejs;%PATH%"
+set "VFILE=%TEMP%\_membrane_ver.txt"
+"%NODE%" -p "require('./package.json').version" > "%VFILE%" 2>nul
+if exist "%VFILE%" (
+    set /p VER=<"%VFILE%"
+    del "%VFILE%" >nul 2>&1
+)
+echo        Membrane ?汾??v%VER%
+
+REM ---------- 2. ?? npm ----------
+echo.
+echo [2/5] ??? npm ...
+set "NPMCMD="
+where npm >nul 2>nul && set "NPMCMD=npm"
+
+if not defined NPMCMD (
+    if exist "%MEMDIR%\..\tools\nodejs\npm.cmd" set "NPMCMD=%MEMDIR%\..\tools\nodejs\npm.cmd"
+)
+if not defined NPMCMD (
+    if exist "%ProgramFiles%\nodejs\npm.cmd" set "NPMCMD=%ProgramFiles%\nodejs\npm.cmd"
+)
+if not defined NPMCMD (
+    echo   [X] ????? npm
+    goto :fail
+)
+echo   OK??%NPMCMD%
+
+REM ---------- 3. ????? ----------
+echo.
+echo [3/5] ???????????λ???????????...
+if "%NPM_CONFIG_CACHE%"=="" set "NPM_CONFIG_CACHE=%MEMDIR%\..\tools\npm-cache"
+call "%NPMCMD%" install
+if errorlevel 1 (
+    echo.
+    echo   [X] ?????????????????????????
+    goto :fail
+)
+echo   OK??????????
+
+REM ---------- 4. ???? ----------
+echo.
+echo [4/5] ??????? ...
 call "%NPMCMD%" run build
 if errorlevel 1 (
-    echo   编译失败，请看上面的红色报错。
+    echo.
+    echo   [X] ???????????????????
     goto :fail
 )
-echo   OK：编译完成
+echo   OK?????????
 
+REM ---------- 5. ??? ----------
 echo.
-echo [4/4] 自检：打印库况...
+echo [5/5] ??? ...
+if not exist "%DATADIR%" mkdir "%DATADIR%"
 set "MEMBRANE_DB=%DBPATH%"
-"%NODE%" "%MEMDIR%\dist\cli.js" stats
+"%NODE%" "%MEMDIR%\dist\cli.js" doctor
 if errorlevel 1 (
-    echo   库况检查失败。
+    echo.
+    echo   [!] ???δ??????????????????????? AI ?????
     goto :fail
 )
-echo   OK：记忆库正常
 
 echo.
 echo ============================================
-echo   安装完成！
+echo   ??????? v%VER%
 echo ============================================
 echo.
-echo   记忆数据库：%DBPATH%
+echo   ?????????%DBPATH%
 echo.
-echo   下一步：把下面这段加到你的 Agent 工具
-echo   （WorkBuddy / Claude / Cline / Cursor / 反重力 等）的 MCP 配置里：
+echo   ????????????÷??????
 echo.
-echo   "membrane": {
-echo     "command": "%NODE%",
-echo     "args": ["%MEMDIR%\dist\cli.js", "mcp"],
-echo     "env": { "MEMBRANE_DB": "%DBPATH%" }
-echo   }
+echo     [1] ??? "??????.bat"      ???????У???????????
+echo     [2] ??? "????????.bat"  Web ???棬????????
+echo     [3] ???? AI ?????Claude Code / Cursor / Cline ?????
+echo           ????????? node dist\cli.js mcp-config ???????
+echo           ????node dist\cli.js mcp-config cursor
 echo.
-echo   详细图文教程见：适配配置\各工具接入配置.md
+echo   ????????????????.md
 echo.
 pause
 exit /b 0
 
 :fail
 echo.
-echo 安装未完成，请把上面的报错发给 AI 助手。
+echo ???δ??ɡ??????????????? AI ?????
+echo.
 pause
 exit /b 1
