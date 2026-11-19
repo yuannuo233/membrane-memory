@@ -18,9 +18,9 @@
 
 | 路径 | avg | p50 | p95 |
 |---|---:|---:|---:|
-| FTS-only（宽查询，命中全库） | 129 ms | 130 ms | 134 ms |
-| **Vector-only（LSH）** | **297 ms** | **298 ms** | **302 ms** |
-| **Hybrid（FTS + LSH + 图）** | **461 ms** | **462 ms** | **481 ms** |
+| FTS-only（宽查询，命中全库） | 126 ms | 125 ms | 131 ms |
+| **Vector-only（LSH）** | **298 ms** | **295 ms** | **315 ms** |
+| **Hybrid（FTS + LSH + 图）** | **463 ms** | **453 ms** | **506 ms** |
 | Vector-only（`exactVectorSearch` 精确全扫） | **10,912 ms** | 10,930 ms | 11,000 ms |
 
 - 加速比：**10.9s → 0.30s，约 36.7 倍**。
