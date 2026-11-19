@@ -16,6 +16,7 @@
  */
 import { Membrane } from "./engine.js";
 import { probeTaskIsolation } from "./isolation.js";
+import { VERSION } from "./version.js";
 import { writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 
@@ -277,7 +278,7 @@ export function runDoctor(dbPath?: string): DoctorReport {
     { name: "多任务串扰：同 namespace 混召回可复现", pass: isolation.sameNamespaceMixed, detail: isolation.sameNamespaceMixed ? `命中 ${isolation.sameNamespaceTasks} 个任务（风险成立）` : "未复现（请检查分词）" },
   ];
   return {
-    version: "0.2.3",
+    version: VERSION,
     generatedAt: new Date(T0).toISOString(),
     deterministic: true,
     scenarios: { writeRecall, staleUpdate, crossSession, vector, graph, isolation },

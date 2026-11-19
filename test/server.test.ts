@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Membrane } from "../src/engine.js";
 import { route, startServer } from "../src/server.js";
+import { VERSION } from "../src/version.js";
 import { MemoryLogger } from "../src/logger.js";
 import { BASE_TIME, newTmpDir, rmDir } from "./helpers.js";
 import { join } from "node:path";
@@ -34,7 +35,7 @@ async function r(method: string, path: string, body: Record<string, unknown> = {
 describe("REST API", () => {
   it("health 返回服务信息", async () => {
     const res = await r("GET", "/api/health");
-    expect(res.body).toMatchObject({ ok: true, service: "membrane-memory", version: "0.2.2" });
+    expect(res.body).toMatchObject({ ok: true, service: "membrane-memory", version: VERSION });
   });
 
   it("空库 stats 全 0", async () => {
@@ -215,6 +216,47 @@ describe("REST API", () => {
     } finally {
       srv.close();
     }
+  });
+
+  it("配 token 后静态控制台仍能打开，API 仍受保护", async () => {
+    const srv = startServer(m, { port: 0, webDir, token: "secret-token" });
+    await once(srv, "listening");
+    const port = (srv.address() as AddressInfo).port;
+    const base = `http://127.0.0.1:${port}`;
+    try {
+      // 浏览器地址栏不可能带 Authorization：静态页必须免鉴权
+      const page = await fetch(`${base}/`);
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain("Membrane");
+
+      // 数据接口无 token → 401
+      const denied = await fetch(`${base}/api/health`);
+      expect(denied.status).toBe(401);
+
+      // Bearer 头与 ?token= 两种方式都放行
+      const byHeader = await fetch(`${base}/api/health`, {
+        headers: { Authorization: "Bearer secret-token" },
+      });
+      expect(byHeader.status).toBe(200);
+      const byQuery = await fetch(`${base}/api/health?token=secret-token`);
+      expect(byQuery.status).toBe(200);
+
+      // CORS 预检不需要 token
+      const preflight = await fetch(`${base}/api/memories`, { method: "OPTIONS" });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get("access-control-allow-headers")).toContain("Authorization");
+    } finally {
+      srv.close();
+    }
+  });
+
+  it("REST recall 默认 brief（不返回 why，和 MCP/README 口径一致）", async () => {
+    await r("POST", "/api/memories", { content: "用户喜欢喝龙井", subject: "用户" });
+    const res = await r("POST", "/api/recall", { query: "用户喝什么" });
+    const results = (res.body as { results: Record<string, unknown>[] }).results;
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]).not.toHaveProperty("why");
+    expect(results[0]).toHaveProperty("content");
   });
 
   it("审计链端点返回 add 记录", async () => {

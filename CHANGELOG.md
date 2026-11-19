@@ -9,6 +9,53 @@
 
 ---
 
+## v0.2.4 — 2026-11-19
+
+### 外部 review 七条修复
+
+> 这些修复改变了若干对外行为，因此单独发一个版本，而不是塞进已发布的 v0.2.3。
+
+**⚠️ 有三处破坏性变更**：
+
+| 变更 | 影响 |
+|---|---|
+| 公开 API `containment` → `tokenOverlap` | 直接 import 该函数的代码需要改名 |
+| 冲突判定公式 `\|A∩B\|/min` → `\|A∩B\|/max` | 短记忆不再以 1.0 相似度取代完整事实；取代行为会变 |
+| REST `/api/recall` 的 `detail` 默认 `full` → `brief` | 不传 detail 的调用方拿到的字段变少（省 token） |
+
+
+外部 review 对 `main` 做了全量静态审查，7 条经逐条复现全部属实。本节记录修复内容；逐文件明细见 `_internal/小本子-改动记录.md`。
+
+1. **配 token 后 Web 控制台打不开（P0）**
+   - 静态页面与 `/api/*`、`/v1/*` 分离鉴权：控制台首屏不再被 Bearer 拦成 401。
+   - 支持 `Authorization: Bearer` 与 `?token=` 两种来源；浏览器首次用 `?token=` 打开后存入 `localStorage`，并从地址栏抹掉。
+   - 补 `OPTIONS` 204 预检与 `Access-Control-Allow-Headers/Methods`；前端 `api()` 自动带 Bearer。
+2. **中文标点把分词口径劈成两半（P0）**
+   - 分词前统一剥离中英文标点（`CJK_PUNCT`），`。`、`，`、`《》` 不再进入 bigram，也不再切断跨标点的连续片段。
+   - `fuzzyUnits` 不再把 `。` 当检索单元；`RUN_SPLIT`/`CJK_CHAR` 移除标点区段。
+3. **短记忆误杀长记忆（P0）**
+   - 冲突相似度从 `|A∩B| / min(|A|,|B|)` 改为 `|A∩B| / max(|A|,|B|)` 的归一化重叠 `tokenOverlap`。
+   - "北京市" 对 "用户住在北京市海淀区" 从 1.0 降到约 0.22，不再自动取代完整事实；同长度换地名仍保持 0.6，可正常取代。
+4. **CLI 布尔 flag 吞位置参数（P1）**
+   - 新增 `BOOLEAN_FLAGS` 白名单（`pin`/`no-embed`/`no-graph`/`no-embeddings`），布尔 flag 不消费下一个参数。
+   - 位置参数改为"下标消费集合"，`add "fact" --kind fact` 中同名正文不再被一起剔除。
+5. **版本漂移（P1）**
+   - 新增 `src/version.ts` 作为唯一事实源；`server.ts`、`mcp.ts`、`mcp-config.ts`、`doctor.ts` 全部改为 `import VERSION`。
+   - `package-lock.json` 顶层与包版本同步（本次发布时统一升到 0.2.4）。
+   - `scripts/check-consistency.mjs` 新增：`src/version.ts` vs `package.json`、lock 版本、源码硬编码版本扫描，以及"用例/cases"测试数正则。
+6. **REST 默认返回 full，与省 token 卖点打架（P2）**
+   - `/api/recall` 的 `detail` 默认从 `full` 改为 `brief`，与 MCP/README 口径一致。
+   - `noGraph` 改用 `asBoolean`，字符串 `"true"` 也能生效。
+7. **导入把备份当可信数据（P2）**
+   - 新增 `normalizeImportRecord`：校验 `kind` 白名单、`confidence` 0~1、`createdAt/updatedAt/validFrom/validTo` 有限、`namespace` 合法、`tags` 只保留字符串。
+   - embedding 向量要求每个元素都是有限 number；出现 `NaN`/`Infinity`/字符串时整条跳过并计入 `skippedEmbeddings`，不再 `filter` 成低维后入库。
+
+**验证**：`npm run build` 通过；`npm test` **221/221 通过，16 个测试文件**；`node --check web/app.js` 通过；`npm run check` 全部文档与源码一致；真实 CLI 实测 `add --pin` 与 `add "fact" --kind fact` 均正确写入。
+
+**影响文件**：`src/tokenize.ts`、`src/engine.ts`、`src/cli.ts`、`src/server.ts`、`src/mcp.ts`、`src/mcp-config.ts`、`src/doctor.ts`、`src/index.ts`、`src/version.ts`（新增）、`web/app.js`、`package-lock.json`、`scripts/check-consistency.mjs`、`test/tokenize.test.ts`（新增）、`test/engine.test.ts`、`test/server.test.ts`、`test/portability.test.ts`、`README.md`、`README.en.md`、`DESIGN.md`、`llms.txt`、`why-membrane.md`、`为什么用Membrane.md`
+
+---
+
 ## v0.2.3 — 2026-11-19
 
 中英双语控制台版：Web 控制台从“只有中文”改为**中文 / English 可切换**，静态页面与动态数据都跟着切；语言选择本地记住，刷新后保持。
@@ -97,6 +144,7 @@
 - 审查确认无问题的点：`t()` 遮蔽（`openDetail` 等处已修，无残留）、`esc()` 对数字安全、badge 样式类齐全、admin 路由在配 token 时同样受 Bearer 保护、MCP 工具级错误用 `isError: true`（符合规范，协议级错误才用 `error` 字段）、未知方法返回 `-32601`。
 
 **影响文件**：`src/mcp.ts`、`src/storage.ts`、`CHANGELOG.md`。
+
 
 ---
 

@@ -62,8 +62,8 @@ describe("Membrane.add：去重与冲突", () => {
     expect(m.stats().total).toBe(1);
   });
 
-  it("换地名的高相似改写 = superseded（包含系数落取代带）", () => {
-    // 用 DESIGN.md 原例："用户住在北京"→"用户住在上海"，bigram 包含系数=0.6 ≥ 0.55
+  it("换地名的高相似改写 = superseded（归一化重叠落取代带）", () => {
+    // 原例："用户住在北京"→"用户住在上海"，token 交集 3 / 并集 5 = 0.6 ≥ 0.55
     m.add({ content: "用户住在北京", subject: "用户", kind: "fact" });
     const r = m.add({ content: "用户住在上海", subject: "用户", kind: "fact" });
     expect(r.status).toBe("superseded");
@@ -72,6 +72,13 @@ describe("Membrane.add：去重与冲突", () => {
     expect(old.validTo).toBe(BASE_TIME);
     expect(old.supersededBy).toBe(r.memory.id);
     expect(m.stats().current).toBe(1);
+  });
+
+  it("短碎片不能取代完整事实（防 min 包含系数误杀）", () => {
+    m.add({ content: "用户住在北京市海淀区", subject: "用户", kind: "fact" });
+    const r = m.add({ content: "北京市", subject: "用户", kind: "fact" });
+    expect(r.status).not.toBe("superseded");
+    expect(m.stats().current).toBe(2);
   });
 
   it("不同 subject 之间不冲突", () => {

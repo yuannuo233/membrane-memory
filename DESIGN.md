@@ -265,11 +265,11 @@ CREATE TABLE mcp_clients (
 - [x] 关系时间感知：记忆被取代/遗忘 → 派生关系 `valid_to` 关闭，不删行，`asOf` 仍可查
 - [x] 断言面扩展：CLI（relations/link/entities/embed-backfill）、MCP（10 工具）、REST（/api/relations、/api/entities）
 - [x] doctor 扩到 5 剧本 7 项检查，原三项数字保持不变（100% / 88% / 0%）
-- 测试：新增 vector 16 + graph 26，累计 **175/175 全绿**（10 个测试文件；v0.2.1 质量版增至 **201/201**，13 个文件；v0.2.2 运维版增至 **210/210**，15 个文件）
+- 测试：新增 vector 16 + graph 26，累计 **175/175 全绿**（10 个测试文件；v0.2.1 质量版增至 **201/201**，13 个文件；v0.2.2 运维版增至 **210/210**，15 个文件；v0.2.3 审查修复版增至 **221/221**）
 
-### 当前状态（2026-11-18——M1~M5 + 质量版 + 可观测版全部完成，210/210 全绿）
-- ✅ **M1 + M2 + M3(MCP/CLI/REST/UI) + M4 + M5 全部验收**：`npm test` = 构建(tsc)通过 + vitest **210/210 全绿**
-  （model 15 + storage 18 + engine 37 + extract 9 + mcp 9 + server 21 + tenant 10 + robustness 24 + vector 16 + graph 26 + portability 6 + mcp-config 7 + update 6 + logger 4 + isolation 2）。
+### 当前状态（2026-11-19——M1~M5 + 质量版 + 可观测版 + 审查修复版全部完成，221/221 全绿）
+- ✅ **M1 + M2 + M3(MCP/CLI/REST/UI) + M4 + M5 全部验收**：`npm test` = 构建(tsc)通过 + vitest **221/221 全绿**
+  （model 15 + storage 18 + engine 38 + extract 9 + mcp 10 + server 24 + tenant 10 + robustness 24 + tokenize 4 + vector 16 + graph 26 + portability 8 + mcp-config 7 + update 6 + logger 4 + isolation 2）。
   - MCP server 经**真实子进程端到端验证**（initialize/tools-list/add/recall 全通，退出码 0）——抓到并修复"handleLine 未写 stdout"的真 bug。
   - REST+UI 经**真实 HTTP 端到端验证**（add/recall/stats 全通）——抓到并修复"webDir 用 cwd 导致换目录启动 UI 404"的真 bug。
 - 📋 适配矩阵已核实：zcode（智谱 GLM）、WorkBuddy、DeepSeek Harness、Claude、Cursor/Cline/Windsurf/反重力/AstrBot 等均可用同一 MCP server 接入，见 `适配配置/`。

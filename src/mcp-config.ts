@@ -12,6 +12,7 @@
  */
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { VERSION } from "./version.js";
 
 /** 支持生成的客户端 id */
 export type McpClientId =
@@ -298,7 +299,7 @@ export function buildMcpConfig(clientId: string, opts: McpConfigOptions = {}): M
       content = JSON.stringify(
         {
           name: "membrane-local",
-          version: "0.2.2",
+          version: VERSION,
           description: "Membrane 记忆脑：时间感知、可解释的 Agent 记忆",
           author: { name: "local" },
           license: "MIT",

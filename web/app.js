@@ -84,6 +84,7 @@ const I18N = {
     'edit.pin': '钉选', 'edit.hint': '保存会创建新版本，旧版本保留在历史里。',
     'edit.cancel': '取消', 'edit.save': '保存新版本',
     'common.loading': '加载中…',
+    'auth.required': '需要访问令牌：请用 http://<地址>/?token=<你的 MEMBRANE_TOKEN> 打开一次，之后会记住。',
     'ingest.contentRequired': '正文不能为空',
     'ingest.superseded': '↳ 已取代：{id}（{content}）',
     'recall.enterQuery': '请输入查询',
@@ -215,6 +216,7 @@ const I18N = {
     'edit.pin': 'Pin', 'edit.hint': 'Saving creates a new version; the old version stays in history.',
     'edit.cancel': 'Cancel', 'edit.save': 'Save new version',
     'common.loading': 'loading…',
+    'auth.required': 'Access token required: open once with http://<host>/?token=<your MEMBRANE_TOKEN>; it will be remembered.',
     'ingest.contentRequired': 'content required',
     'ingest.superseded': '↳ superseded: {id} ({content})',
     'recall.enterQuery': 'enter a query to begin',
@@ -302,13 +304,18 @@ const state = {
 };
 
 async function api(path, opts = {}) {
+  const headers = {};
+  if (opts.body) headers['Content-Type'] = 'application/json';
+  const token = localStorage.getItem('membrane.token');
+  if (token) headers['Authorization'] = 'Bearer ' + token;
   const r = await fetch(API + path, {
     method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+    headers,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   let data = null;
   try { data = await r.json(); } catch { data = null; }
+  if (r.status === 401) throw new Error(t('auth.required'));
   if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
   return data;
 }
@@ -876,6 +883,16 @@ $('log-auto').addEventListener('change', e => {
 $('btn-isolation').addEventListener('click', runIsolationProbe);
 
 // ---- boot ----
+// 令牌只提示一次：?token=xxx 存进 localStorage，然后从地址栏抹掉，避免截图/日志泄露
+(() => {
+  const q = new URLSearchParams(location.search);
+  const tok = q.get('token');
+  if (!tok) return;
+  localStorage.setItem('membrane.token', tok);
+  q.delete('token');
+  const rest = q.toString();
+  history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+})();
 setLanguage(lang, false);
 const initialView = location.hash.slice(1);
 const initialBtn = initialView ? document.querySelector(`.nav-item[data-view="${initialView}"]`) : null;

@@ -20,7 +20,7 @@ import {
   normalizePredicate,
   normalizeVec,
 } from "./model.js";
-import { charScore, containment, fuzzyUnits, tokenSet } from "./tokenize.js";
+import { charScore, fuzzyUnits, tokenOverlap, tokenSet } from "./tokenize.js";
 import { createMonotonicUlid } from "./ulid.js";
 import { embedText } from "./llm.js";
 import type { FetchLike } from "./llm.js";
@@ -904,7 +904,7 @@ export class Membrane {
     current: MemoryRecord[],
   ): { high: MemoryRecord[]; mid: MemoryRecord[]; pinned: MemoryRecord[]; sim: (m: MemoryRecord) => number } {
     const newSet = tokenSet(content);
-    const sim = (m: MemoryRecord): number => containment(newSet, tokenSet(m.content));
+    const sim = (m: MemoryRecord): number => tokenOverlap(newSet, tokenSet(m.content));
     const th = DEFAULT_CONFLICT_THRESHOLDS.lexical;
     return {
       sim,
@@ -1491,6 +1491,57 @@ export class Membrane {
   }
 
   /**
+   * 导入前校验并归一化一条记忆。
+   *
+   * 备份文件是外部输入，不能假设它跟 exportAll 一样干净：
+   * kind 可能是乱字符串、confidence 可能是 NaN/2、时间戳可能是字符串。
+   * 这些值直接 insert 会污染库，或者让后续排序/时间过滤出现幽灵行为。
+   */
+  private normalizeImportRecord(rec: MemoryRecord): MemoryRecord {
+    const kinds: MemoryKind[] = ["fact", "episode", "preference", "procedure"];
+    if (!kinds.includes(rec.kind)) {
+      throw new MembraneError("E_IMPORT_FORMAT", `记忆 ${rec.id} 的 kind 非法：${String(rec.kind)}`);
+    }
+    const confidence = Number(rec.confidence);
+    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+      throw new MembraneError("E_IMPORT_FORMAT", `记忆 ${rec.id} 的 confidence 非法：${String(rec.confidence)}`);
+    }
+    const createdAt = Number(rec.createdAt);
+    const updatedAt = Number(rec.updatedAt);
+    const validFrom = Number(rec.validFrom);
+    if (![createdAt, updatedAt, validFrom].every(Number.isFinite)) {
+      throw new MembraneError("E_IMPORT_FORMAT", `记忆 ${rec.id} 的时间戳非法`);
+    }
+    const validTo = rec.validTo == null ? null : Number(rec.validTo);
+    if (validTo !== null && !Number.isFinite(validTo)) {
+      throw new MembraneError("E_IMPORT_FORMAT", `记忆 ${rec.id} 的 validTo 非法`);
+    }
+    let namespace: string;
+    try {
+      namespace = normalizeNamespace(rec.namespace);
+    } catch {
+      throw new MembraneError("E_IMPORT_FORMAT", `记忆 ${rec.id} 的 namespace 非法`);
+    }
+    return {
+      ...rec,
+      kind: rec.kind,
+      content: String(rec.content),
+      subject: rec.subject == null ? null : String(rec.subject),
+      tags: Array.isArray(rec.tags) ? rec.tags.filter((x): x is string => typeof x === "string") : [],
+      confidence,
+      source: rec.source == null ? null : String(rec.source),
+      namespace,
+      createdAt,
+      updatedAt,
+      validFrom,
+      validTo,
+      supersededBy: rec.supersededBy == null ? null : String(rec.supersededBy),
+      deleted: rec.deleted === true || Number(rec.deleted) === 1,
+      pin: rec.pin === true || Number(rec.pin) === 1,
+    };
+  }
+
+  /**
    * 导入备份（**幂等、不覆盖**）：已存在的记忆/关系按 id 跳过，
    * 所以同一份备份导入两次结果一致，也不会冲掉目标库里更新的数据。
    *
@@ -1540,7 +1591,7 @@ export class Membrane {
           result.skippedMemories++;
           continue;
         }
-        this.storage.insert(rec);
+        this.storage.insert(this.normalizeImportRecord(rec));
         importedMemoryIds.add(rec.id);
         result.memories++;
       }
@@ -1585,7 +1636,12 @@ export class Membrane {
 
       for (const emb of embeddings) {
         if (!emb || !importedMemoryIds.has(emb.id) || !Array.isArray(emb.vec)) continue;
-        const vec = new Float32Array(emb.vec.filter((x): x is number => Number.isFinite(x)));
+        // 任何非有限数（NaN/Infinity/字符串）都整条拒绝，绝不静默 filter 成低维后入库
+        if (!emb.vec.every((x) => typeof x === "number" && Number.isFinite(x))) {
+          result.skippedEmbeddings++;
+          continue;
+        }
+        const vec = new Float32Array(emb.vec);
         if (vec.length === 0) continue;
         if (dims.size > 0 && !dims.has(vec.length)) {
           result.skippedEmbeddings++;

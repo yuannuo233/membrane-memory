@@ -10,6 +10,7 @@
  */
 import { Membrane, toBrief, toUltraBrief } from "./engine.js";
 import { llmFromEnv } from "./llm.js";
+import { VERSION } from "./version.js";
 import { randomUUID } from "node:crypto";
 import {
   asBoolean as bool,
@@ -451,7 +452,7 @@ export async function handleLine(
     return send({
       protocolVersion,
       capabilities: { tools: {} },
-      serverInfo: { name: "membrane-memory", version: "0.2.3" },
+      serverInfo: { name: "membrane-memory", version: VERSION },
       instructions:
         "Membrane 记忆脑：用 membrane_add 记住事实，用 membrane_recall 按语义召回并查看 why 理由，用 membrane_relations 查实体之间的关系，用 membrane_link 手动建立关系，用 membrane_forget 遗忘。",
     });

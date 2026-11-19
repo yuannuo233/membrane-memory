@@ -108,6 +108,13 @@ mcp-config 选项：
   set MEMBRANE_DB=E:/我的记忆/membrane.db && membrane-memory mcp`);
 }
 
+/**
+ * 只带开关、不带值的布尔 flag。
+ * 不在白名单里的 `--key` 一律要求后面跟一个值；否则 `add --pin "正文"`
+ * 会把正文当成 pin 的值，位置参数变空，直接报"请提供记忆内容"。
+ */
+const BOOLEAN_FLAGS = new Set(["pin", "no-embed", "no-graph", "no-embeddings"]);
+
 /** 解析 --key value 形式的选项 */
 function opts(args: string[]): { flags: Set<string>; kv: Map<string, string> } {
   const flags = new Set<string>();
@@ -117,6 +124,10 @@ function opts(args: string[]): { flags: Set<string>; kv: Map<string, string> } {
     if (!a.startsWith("--")) continue;
     const key = a.slice(2);
     const next = args[i + 1];
+    if (BOOLEAN_FLAGS.has(key)) {
+      flags.add(key);
+      continue;
+    }
     if (next !== undefined && !next.startsWith("--")) {
       kv.set(key, next);
       i++;
@@ -128,8 +139,10 @@ function opts(args: string[]): { flags: Set<string>; kv: Map<string, string> } {
 }
 
 /**
- * 取位置参数（第一个不以 -- 开头、且不是某个选项值的参数）。
- * 不能简单用 find(!startsWith("--"))——那样 `--kind fact` 里的 `fact` 会被误当成内容。
+ * 取位置参数（不以 -- 开头、且没有被某个选项当作值的参数）。
+ *
+ * 关键：用下标记录"被消费的值"，而不是按字符串内容剔除。
+ * 否则 `add "fact" --kind fact` 里正文和选项值同名，"fact" 会被一起删掉。
  */
 function positional(args: string[]): string | undefined {
   return positionals(args)[0];
@@ -137,14 +150,19 @@ function positional(args: string[]): string | undefined {
 
 /** 取全部位置参数（link 需要三个：起点、谓词、终点） */
 function positionals(args: string[]): string[] {
-  const valueSet = new Set<string>();
+  const consumed = new Set<number>();
   for (let i = 0; i < args.length; i++) {
-    if (args[i]!.startsWith("--")) {
-      const next = args[i + 1];
-      if (next !== undefined && !next.startsWith("--")) valueSet.add(next);
+    const a = args[i]!;
+    if (!a.startsWith("--")) continue;
+    const key = a.slice(2);
+    if (BOOLEAN_FLAGS.has(key)) continue;
+    const next = args[i + 1];
+    if (next !== undefined && !next.startsWith("--")) {
+      consumed.add(i + 1);
+      i++;
     }
   }
-  return args.filter((a) => !a.startsWith("--") && !valueSet.has(a));
+  return args.filter((a, i) => !a.startsWith("--") && !consumed.has(i));
 }
 
 function parseKind(v: string | undefined): MemoryKind | undefined {

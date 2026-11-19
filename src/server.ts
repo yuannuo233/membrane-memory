@@ -16,6 +16,7 @@ import { Membrane, toBrief, toUltraBrief } from "./engine.js";
 import { MembraneError } from "./model.js";
 import { MemoryLogger, type LogLevel } from "./logger.js";
 import { probeTaskIsolation } from "./isolation.js";
+import { VERSION } from "./version.js";
 import {
   asBoolean,
   asEntityInputs,
@@ -65,6 +66,8 @@ function json(res: ServerResponse, status: number, body: unknown): void {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
     "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
   });
   res.end(payload);
 }
@@ -183,7 +186,7 @@ export async function route(
   }
   if (method === "GET" && urlPath === "/api/health") {
     return {
-      body: { ok: true, service: "membrane-memory", version: "0.2.2", db: engine.storage.path },
+      body: { ok: true, service: "membrane-memory", version: VERSION, db: engine.storage.path },
     };
   }
   // ---- 运维后台（给懂的人看；不返回任何记忆正文） ----
@@ -216,7 +219,7 @@ export async function route(
       body: {
         ok: true,
         service: "membrane-memory",
-        version: ctx.version ?? "0.2.2",
+        version: ctx.version ?? VERSION,
         uptimeMs: ctx.startedAt === undefined ? null : Date.now() - ctx.startedAt,
         pid: process.pid,
         node: process.version,
@@ -307,9 +310,10 @@ export async function route(
       namespace: asString(body.namespace),
       entities: asStringArray(body.entities),
       hops: asFiniteNumber(body.hops),
-      noGraph: body.noGraph === true,
+      noGraph: asBoolean(body.noGraph),
     });
-    const detail = asString(body.detail) ?? "full";
+    // 默认 brief：REST 与 MCP/README 口径一致，避免"省 token"卖点被远程调用打脸
+    const detail = asString(body.detail) ?? "brief";
     if (detail === "ultra") {
       return { body: { results: hits.map(toUltraBrief), count: hits.length } };
     }
@@ -481,7 +485,7 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
     host,
     port,
     tokenConfigured: !!token,
-    version: "0.2.2",
+    version: VERSION,
   };
 
   const server = createServer((req, res) => {
@@ -491,17 +495,33 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
     let status = 500;
     void (async () => {
       try {
-        // token 校验（配了才要求）；用常量时间比较，避免时序侧信道
-        if (token) {
+        // CORS 预检必须早于鉴权：浏览器预检不会带 Authorization
+        if (method === "OPTIONS") {
+          res.writeHead(204, {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "86400",
+          });
+          res.end();
+          return;
+        }
+        const u = new URL(req.url ?? "/", `http://${host}`);
+        // 只锁数据接口；静态控制台必须能先加载，否则浏览器地址栏永远打不开
+        const isApiPath = u.pathname.startsWith("/api/") || u.pathname.startsWith("/v1/");
+        // token 校验（配了才要求）；用常量时间比较，避免时序侧信道。
+        // 兼容两种来源：Authorization: Bearer xxx（脚本/客户端），?token=xxx（浏览器首次打开后存 localStorage）
+        if (token && isApiPath) {
           const auth = req.headers["authorization"];
-          if (typeof auth !== "string" || !safeEqual(auth, `Bearer ${token}`)) {
+          const qToken = u.searchParams.get("token");
+          const provided = typeof auth === "string" ? auth : qToken ? `Bearer ${qToken}` : "";
+          if (!safeEqual(provided, `Bearer ${token}`)) {
             status = 401;
             logger.warn("http.auth_failed", { method, path: pathForLog });
             json(res, 401, { error: "Unauthorized" });
             return;
           }
         }
-        const u = new URL(req.url ?? "/", `http://${host}`);
         const query: Record<string, unknown> = {};
         u.searchParams.forEach((v, k) => (query[k] = v));
         // PATCH/PUT 也带 JSON body；之前只读 POST，导致真实 HTTP 编辑时内容被当成空对象

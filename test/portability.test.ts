@@ -129,6 +129,31 @@ describe("exportAll / importAll：全量备份", () => {
     a.close();
   });
 
+  it("向量含 NaN/Infinity：整条跳过，不静默压成低维", () => {
+    const { engine: a } = makeSource();
+    const bundle = a.exportAll();
+    const bad = JSON.parse(JSON.stringify(bundle)) as typeof bundle;
+    bad.embeddings[0]!.vec = [1, NaN, 0, 0];
+    const e = new Membrane({ dbPath: join(dir, "nan.db"), now: () => BASE_TIME });
+    const r = e.importAll(bad);
+    expect(r.embeddings).toBe(0);
+    expect(r.skippedEmbeddings).toBe(1);
+    e.close();
+    a.close();
+  });
+
+  it("坏 kind：拒绝导入并报 E_IMPORT_FORMAT，不污染库", () => {
+    const { engine: a } = makeSource();
+    const bundle = a.exportAll();
+    const bad = JSON.parse(JSON.stringify(bundle)) as typeof bundle;
+    bad.memories[0]!.kind = "garbage" as typeof bundle.memories[0]["kind"];
+    const f = new Membrane({ dbPath: join(dir, "badkind.db"), now: () => BASE_TIME });
+    expect(() => f.importAll(bad)).toThrow(MembraneError);
+    expect(f.stats().total).toBe(0);
+    f.close();
+    a.close();
+  });
+
   it("坏文件拒绝导入：格式不对直接报 E_IMPORT_FORMAT", () => {
     dir = newTmpDir("portability");
     const m = new Membrane({ dbPath: join(dir, "bad.db") });

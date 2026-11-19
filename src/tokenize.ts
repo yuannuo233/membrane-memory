@@ -13,8 +13,21 @@
  * 全部失效——这是 FTS 注入无害化的第一道防线（另有专项测试）。
  */
 
+/**
+ * CJK 标点/符号：分词前先去掉，而不是当成"分隔符"。
+ *
+ * 为什么：如果标点当分隔符，"用户，住在北京" 会被切成两段，丢掉跨逗号的
+ * "户住" bigram；而无标点的查询 "用户住在北京" 恰好需要这个 bigram，
+ * AND 精确检索就会失败、被迫降级 OR，召回变宽。统一先剥离标点，
+ * 让"带不带标点"两种写法产生同一套 token。
+ *
+ * 注意只剥中文/全角标点，ASCII 标点（. , ! ?）仍作为拉丁词的分隔符。
+ */
+const CJK_PUNCT =
+  /[\u3000-\u303F\u00B7\u2010-\u2027\uFF01-\uFF0F\uFF1A-\uFF20\uFF3B-\uFF40\uFF5B-\uFF65]/g;
+
 /** 从文本里切出"连续 CJK 段"或"拉丁/数字/下划线词" */
-const RUN_SPLIT = /([\u2E80-\u2EFF\u3000-\u303F\u3040-\u30FF\u3100-\u312F\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]+)|([A-Za-z0-9_]+)/g;
+const RUN_SPLIT = /([\u2E80-\u2EFF\u3040-\u30FF\u3100-\u312F\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]+)|([A-Za-z0-9_]+)/g;
 
 /**
  * 分词：CJK 连续段 → 相邻两字滑窗（bigram）；单字段 → 该字本身；
@@ -25,7 +38,8 @@ const RUN_SPLIT = /([\u2E80-\u2EFF\u3000-\u303F\u3040-\u30FF\u3100-\u312F\u3130-
  */
 export function tokenize(text: string): string[] {
   const tokens: string[] = [];
-  for (const match of text.matchAll(RUN_SPLIT)) {
+  const clean = text.replace(CJK_PUNCT, "");
+  for (const match of clean.matchAll(RUN_SPLIT)) {
     const cjk = match[1];
     const word = match[2];
     if (cjk !== undefined) {
@@ -80,18 +94,26 @@ export function tokenSet(text: string): Set<string> {
   return new Set(tokenize(text));
 }
 
-/** 包含系数：交集除以较小集合的大小；任一为空集时返回 0 */
-export function containment(a: Set<string>, b: Set<string>): number {
+/**
+ * 归一化重叠度：|A∩B| / max(|A|,|B|)。
+ *
+ * 为什么不用 |A∩B| / min(|A|,|B|)（包含系数）：它是非对称的，短句只要
+ * 完整出现在长句里就得到 1.0——"北京市" 会以 1.0 的相似度取代
+ * "用户住在北京市海淀区"，等于用碎片覆盖完整事实。
+ * 除以较大集合后：短句 vs 长句 = 短/长（很低），同长度改写 = 交集/长度
+ * （"用户住在北京"→"用户住在上海" = 3/5 = 0.6，仍能落取代带）。
+ */
+export function tokenOverlap(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   let inter = 0;
   for (const t of a) {
     if (b.has(t)) inter++;
   }
-  return inter / Math.min(a.size, b.size);
+  return inter / Math.max(a.size, b.size);
 }
 
-/** CJK 单字判定（与 RUN_SPLIT 的区段保持一致） */
-const CJK_CHAR = /[\u2E80-\u2EFF\u3000-\u303F\u3040-\u30FF\u3100-\u312F\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/;
+/** CJK 单字判定（与 RUN_SPLIT 的区段保持一致，不含标点） */
+const CJK_CHAR = /[\u2E80-\u2EFF\u3040-\u30FF\u3100-\u312F\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/;
 /** 拉丁/数字词 */
 const LATIN_WORD = /[a-z0-9]+/g;
 
@@ -103,8 +125,9 @@ const LATIN_WORD = /[a-z0-9]+/g;
  */
 export function fuzzyUnits(text: string): Set<string> {
   const out = new Set<string>();
-  const lower = text.toLowerCase();
-  for (const c of text) if (CJK_CHAR.test(c)) out.add(c);
+  const clean = text.replace(CJK_PUNCT, "");
+  const lower = clean.toLowerCase();
+  for (const c of clean) if (CJK_CHAR.test(c)) out.add(c);
   for (const w of lower.match(LATIN_WORD) ?? []) out.add(w);
   return out;
 }

@@ -10,7 +10,7 @@
  *
  * 用法：node scripts/check-consistency.mjs
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,6 +27,8 @@ const DOCS = [
 /** 从源码抓"事实" */
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8').replace(/^\uFEFF/, ''));
 const mcpSrc = readFileSync(join(root, 'src/mcp.ts'), 'utf8');
+const versionSrc = readFileSync(join(root, 'src/version.ts'), 'utf8');
+const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8').replace(/^\uFEFF/, ''));
 
 const FACT = {
   version: pkg.version,
@@ -37,8 +39,27 @@ const FACT = {
   mcpTools: (mcpSrc.match(/name: "membrane_/g) || []).length,
 };
 
+const problems = [];
+
+// 0) 版本唯一事实源：src/version.ts 必须等于 package.json，lock 也要跟
+const srcVersion = versionSrc.match(/export const VERSION = "([^"]+)"/)?.[1];
+if (srcVersion !== FACT.version) {
+  problems.push(`src/version.ts 写 ${srcVersion ?? '(没找到)'}，package.json 是 ${FACT.version}`);
+}
+if (lock.version !== FACT.version || lock.packages?.['']?.version !== FACT.version) {
+  problems.push(`package-lock.json 写 ${lock.version} / ${lock.packages?.['']?.version}，package.json 是 ${FACT.version}`);
+}
+
+// 0b) 源码里不允许再硬编码版本号（version.ts 自己是唯一事实源）
+const srcDir = join(root, 'src');
+for (const f of readdirSync(srcDir).filter((n) => n.endsWith('.ts') && n !== 'version.ts').sort()) {
+  const text = readFileSync(join(srcDir, f), 'utf8');
+  for (const m of text.matchAll(/(?:version|VERSION)\s*[:=]\s*"0\.\d+\.\d+"/g)) {
+    problems.push(`src/${f}: 硬编码版本号（"${m[0]}"），应 import VERSION`);
+  }
+}
+
 /** 测试用例数：从测试目录里数 it( 出现次数（动态扫，新增测试文件不用手改这里） */
-import { readdirSync } from 'node:fs';
 let testCount = 0;
 const testDir = join(root, 'test');
 if (existsSync(testDir)) {
@@ -48,15 +69,13 @@ if (existsSync(testDir)) {
 }
 FACT.tests = testCount;
 
-const problems = [];
-
 for (const doc of DOCS) {
   const p = join(root, doc);
   if (!existsSync(p)) continue;
   const text = readFileSync(p, 'utf8');
 
   // 1) 测试数量
-  for (const m of text.matchAll(/\b(\d{2,4})\s*(?:个)?\s*(?:tests|测试)/gi)) {
+  for (const m of text.matchAll(/\b(\d{2,4})\s*(?:个)?\s*(?:tests|测试|用例|cases)/gi)) {
     const n = Number(m[1]);
     if (n > 10 && n !== FACT.tests) {
       problems.push(`${doc}: 测试数写作 ${n}，源码实际 ${FACT.tests}（"${m[0]}"）`);
