@@ -14,7 +14,7 @@
 **时间感知、本地优先、可解释的 Agent 记忆引擎。**
 
 给 AI Agent 用的长期记忆层 / memory engine / agent memory / LLM memory / chatbot memory。
-零依赖（仅 `ulid`）、单个 SQLite 文件、无遥测、可离线运行。
+**零 npm 运行时依赖**（只有 `ulid`）、单个 SQLite 文件、无遥测、可离线运行。
 支持 MCP（Model Context Protocol）——一个 server 接入 Claude Code、Cursor、Cline、
 Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管，隐私优先。
 
@@ -22,6 +22,13 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 
 > 一句话：给 AI Agent 一个**过目不忘、还会告诉你"为什么想起这条"**的记忆脑。
 > 装上就能用——不联网、不下模型、不要 API key、零原生依赖。
+
+> 🧩 **关于"零依赖"的准确含义**（避免误解）：
+> 指的是**安装时不需要下载任何第三方 npm 包**（除了 `ulid` 一个纯 JS 库），
+> 也不需要编译原生模块。**不等于所有用法都不需要浏览器**——
+> CLI、MCP、SDK 三种用法纯命令行/纯代码，完全不碰浏览器；
+> 只有 `membrane-memory serve`（可选的 Web 控制台）才需要用浏览器打开看界面。
+> 不装浏览器、不启控制台，引擎功能一个不少。
 
 > 🔴 **诚实声明（请先读）**：这是 v0.2 早期项目，单人开发、212 个测试（CI 实时验证）、**尚无真实用户验证**。
 > 下方「[已知局限](#已知局限别踩坑)」把我们所有短板逐条写明了，建议先看完再决定用不用。

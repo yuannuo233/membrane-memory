@@ -26,3 +26,6 @@ npm-debug.log*
 _internal/
 reports/
 竞品调研/
+
+## 临时文件
+.tmp-*.txt

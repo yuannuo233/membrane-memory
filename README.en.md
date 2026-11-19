@@ -14,7 +14,7 @@
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
 
 A long-term memory layer for AI agents / LLM memory / agent memory / chatbot memory.
-Zero runtime dependencies (only `ulid`), a single SQLite file, no telemetry, fully offline.
+**Zero npm runtime dependencies** (only `ulid`), a single SQLite file, no telemetry, fully offline.
 Ships an MCP (Model Context Protocol) server — one process plugs into Claude Code, Cursor,
 Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hosted, privacy-first.
 
@@ -22,6 +22,13 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 > Give your agent a memory that never forgets — and tells you **why** it recalled each item.
 > Works out of the box: no network, no model download, no API key, no native dependencies.
+
+> 🧩 **What "zero dependency" actually means here** (to avoid a common misreading):
+> it means **installing pulls no third-party npm packages** beyond `ulid`, and there is no
+> native build step. It does **not** mean no browser is ever needed — the CLI, the MCP server
+> and the SDK are pure command-line / pure code and never touch a browser. Only
+> `membrane-memory serve` (the optional web console) renders in one. Skip it and you lose
+> nothing functionally.
 
 > 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 212 tests (verified live by CI), **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
