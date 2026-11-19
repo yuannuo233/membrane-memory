@@ -1081,8 +1081,8 @@ export class Membrane {
       graph: graphHits.length > 0,
     });
 
-    // 6) 逐条打分（证据计数一次性取，避免 N+1 查询）
-    const evidenceCounts = this.storage.evidenceCountAll();
+    // 6) 逐条打分（证据计数只查候选 ids——审查修复 M-11，不再全表 GROUP BY）
+    const evidenceCounts = this.storage.evidenceCounts(candidates.map((h) => h.record.id));
     const hits: RecallHit[] = candidates.map((h) =>
       this.scoreHit(h, {
         textRank,

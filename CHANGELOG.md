@@ -9,6 +9,51 @@
 
 ---
 
+## v0.2.6 — 2026-11-20
+
+### 安全修复（独立代码审查）+ 一批低危改进
+
+> 主智能体对全部 20 个源文件做只读审查（清单见工作区《Membrane问题清单.md》），按严重度修复。
+
+**🔴 M-1（高危）数据接口默认无鉴权 + CORS 全开 → 已修复**
+- 问题：默认绑定 127.0.0.1 且**不要求令牌**，同时每个响应都带 `Access-Control-Allow-Origin: *`
+  ——用户浏览器里打开的任意网页都能跨源读取/写入/遗忘全部记忆（drive-by 攻击面）。
+- 修复：
+  1. 数据接口（/api/* 与 /v1/*）**一律要求令牌**，没有"本机绑定免鉴权"的豁免；
+  2. 未配置令牌时**自动生成** 24 字节随机令牌并存 settings（重启复用），控制台打印带 token 的完整 URL；
+  3. **CORS 默认零放行**（同源 Dashboard 不需要 CORS 头），需要跨源用 MEMBRANE_CORS_ORIGIN 显式指定，绝不反射任意来源；
+  4. /api/health 免鉴权仅用于探活，但不再暴露数据库路径（移到受令牌保护的 diagnostics）。
+- 新增测试 3 个（自动令牌 401/200 与静态页免鉴权、CORS 默认零放行/显式放行、health 不含 db 路径）。
+
+**🟠 M-3（中）绑定 IPv6/特殊地址时全部请求 500 → 已修复**
+- `new URL(req.url, \`http://${host}\`)` 在 host="::" 时 base 非法 → 每请求抛异常。
+- base 改为固定 `http://localhost`（与实际绑定地址无关，仅作解析基准）。
+
+**🟠 M-4（中）切换 embedding 模型被旧维度卡死 → 已修复**
+- 已被取代记忆的向量留在 embeddings 表，`embeddingDims` 把旧维度算进去，
+  新模型写入全部被"维度不一致"拒绝，且没有清理出口。
+- 新增 `embed-purge` CLI 子命令（--yes 二次确认）+ `Storage.purgeEmbeddings()`；新增测试 2 个。
+
+**🟠 M-5（中）端口占用直接崩栈 → 已修复**
+- `server.listen` 增加 `'error'` 事件处理：EADDRINUSE 给中文提示（含换端口方法）。
+
+**🟡 低危批量**
+- M-6：`npm test` 嵌套调 npm，PATH 受限环境必挂 → 改为 `tsc && vitest run` 不嵌套。
+- M-7：MCP stdio 响应可能乱序 → 串行化 Promise 链，按请求顺序写回。
+- M-11：recall 每次 `evidenceCountAll()` 全表 GROUP BY → 改为按候选 ids 分批查询。
+- M-12：SQLite 变量上限注释过时（999→32766）+ fuzzyCandidates 检索单元超 500 截断。
+- M-13：graph-extract 动词交替顺序导致"去了趟北京"抽出"了趟北京"→ 长分支放最前。
+- M-13b：tokenSet 注释仍写"包含系数/min"，与实现（max 重叠度）矛盾 → 同步。
+
+**审查更正**：清单中 M-2（短碎片取代长事实）经复核 **A 群已自行修复**（tokenOverlap 分母改为 max 并带回归测试），撤销该项。
+
+**记录在案（本轮不改，v0.3 候选）**：M-8（URL token 文档化）、M-9（"未来生效记忆"语义固化）、M-10（不可信来源抽取的投毒面声明）、M-16（engines >=24 取舍）。
+
+**验证**：`npm test` = **17 文件 227/227 全绿**（新增 purge 2 项 + server 安全回归 3 项）；`tsc` 0 错误。
+**影响文件**：src/server.ts、src/storage.ts、src/engine.ts、src/mcp.ts、src/cli.ts、src/graph-extract.ts、src/tokenize.ts、src/version.ts、package.json、test/server.test.ts、test/purge.test.ts（新增）、DESIGN.md
+
+---
+
 ## v0.2.5 — 2026-11-19
 
 ### 10 万级向量检索压测 + 零依赖 LSH 桶索引

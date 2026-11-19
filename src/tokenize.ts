@@ -87,8 +87,9 @@ export function buildFtsQuery(tokens: string[], mode: "and" | "or"): string | nu
 }
 
 /**
- * 语义相似度用的 token 集合（DESIGN.md 第 4 节：包含系数 = |A∩B|/min(|A|,|B|)）。
+ * 语义相似度用的 token 集合。
  * 与 FTS 索引同一套分词，保证"冲突检测看到的"和"检索看到的"一致。
+ * 重叠度算法见 tokenOverlap 的注释（|A∩B|/max，不是包含系数）。
  */
 export function tokenSet(text: string): Set<string> {
   return new Set(tokenize(text));

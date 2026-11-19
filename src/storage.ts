@@ -713,6 +713,10 @@ export class Storage {
     asOf?: number,
   ): { id: string; hits: number }[] {
     if (units.length === 0) return [];
+    // 审查修复（M-12）：超长查询的检索单元可能超过 SQLite 变量上限（32766），
+    // 500 个单元对"隔字兜底"绰绰有余——截断保平安
+    const capped = units.length > 500 ? units.slice(0, 500) : units;
+    units = capped;
     const placeholders = units.map(() => "?").join(",");
     const params: (string | number)[] = [...units, namespace];
     const temporal = memoryTemporalSql("m", asOf);
@@ -734,6 +738,7 @@ export class Storage {
   /** 批量按 id 取记忆（模糊兜底用，避免 N+1） */
   getMany(ids: string[]): Map<string, MemoryRecord> {
     if (ids.length === 0) return new Map();
+    // SQLite 变量上限 32766（≥3.32，下同）：按 400 一批切分，宁多跑几次也不炸
     const placeholders = ids.map(() => "?").join(",");
     const rows = this.stmt(`SELECT * FROM memories WHERE id IN (${placeholders})`).all(
       ...ids,
@@ -784,6 +789,17 @@ export class Storage {
   }
 
   /**
+   * 审查修复（M-4）：清空全部向量与桶索引（切换 embedding 模型后重建用）。
+   * **不可逆操作**，调用方（CLI embed-purge）必须让用户确认。
+   * 之后用 embed-backfill 重新回填即可，维度守卫从零重新开始。
+   */
+  purgeEmbeddings(): void {
+    this.stmt(`DELETE FROM vector_lsh`).run();
+    this.stmt(`DELETE FROM embeddings`).run();
+    this.lshReady = false;
+  }
+
+  /**
    * 库内已有向量的维度分布（维度 → 条数）。
    * 用途：防止混用两套 embedding 模型——维度不同的向量余弦恒为 0，
    * 混进来会静默地"永远召不中"，必须在写入时就拦下并说明。
@@ -800,7 +816,7 @@ export class Storage {
   getEmbeddingsByIds(ids: string[]): Map<string, Float32Array> {
     const out = new Map<string, Float32Array>();
     if (ids.length === 0) return out;
-    // SQLite 变量上限 999（老版本 127），按 400 一批切分，宁多跑几次也不炸
+    // SQLite 变量上限 32766（≥3.32，老注释里的 999 已过时），按 400 一批切分
     for (let i = 0; i < ids.length; i += 400) {
       const chunk = ids.slice(i, i + 400);
       const rows = this.stmt(
@@ -1187,12 +1203,37 @@ export class Storage {
     }
   }
 
-  /** 所有记忆的证据条数（一次查询，供 recall 打明细，避免 N+1） */
+  /**
+   * 候选记忆的证据条数（审查修复 M-11：按 ids 过滤查询，不再每次召回全表 GROUP BY）。
+   * 不传 ids 时才做全表统计（导出/统计场景用）。
+   */
+  evidenceCounts(ids?: string[]): Map<string, number> {
+    if (ids && ids.length === 0) return new Map();
+    const mapRows = (rows: { memory_id: string; n: number }[]) =>
+      new Map(rows.map((r) => [String(r.memory_id), Number(r.n)]));
+    if (!ids) {
+      const rows = this.stmt(
+        `SELECT memory_id, COUNT(*) AS n FROM evidence GROUP BY memory_id`,
+      ).all() as { memory_id: string; n: number }[];
+      return mapRows(rows);
+    }
+    const out = new Map<string, number>();
+    // SQLite 变量上限 32766（≥3.32），400 一批留足余量
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const rows = this.stmt(
+        `SELECT memory_id, COUNT(*) AS n FROM evidence
+          WHERE memory_id IN (${chunk.map(() => "?").join(",")})
+         GROUP BY memory_id`,
+      ).all(...chunk) as { memory_id: string; n: number }[];
+      for (const r of rows) out.set(String(r.memory_id), Number(r.n));
+    }
+    return out;
+  }
+
+  /** @deprecated 用 evidenceCounts(ids)（按候选过滤，避免全表聚合） */
   evidenceCountAll(): Map<string, number> {
-    const rows = this.stmt(
-      `SELECT memory_id, COUNT(*) AS n FROM evidence GROUP BY memory_id`,
-    ).all() as { memory_id: string; n: number }[];
-    return new Map(rows.map((r) => [String(r.memory_id), Number(r.n)]));
+    return this.evidenceCounts();
   }
 
   // ---------- settings ----------

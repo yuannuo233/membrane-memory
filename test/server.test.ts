@@ -200,13 +200,17 @@ describe("REST API", () => {
   it("真实 HTTP PATCH 能读到 JSON body（防回归：只读 POST 的坑）", async () => {
     const add = await r("POST", "/api/memories", { content: "用户住在北京", subject: "用户" });
     const oldId = (add.body as { memory: { id: string } }).memory.id;
-    const srv = startServer(m, { port: 0, webDir });
+    // 审查修复（M-1）：数据接口一律要令牌，测试也要带
+    const srv = startServer(m, { port: 0, webDir, token: "t-patch" });
     await once(srv, "listening");
     const port = (srv.address() as AddressInfo).port;
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/memories/${oldId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer t-patch",
+        },
         body: JSON.stringify({ content: "用户住在上海（HTTP）" }),
       });
       expect(res.status).toBe(200);
@@ -241,13 +245,72 @@ describe("REST API", () => {
       const byQuery = await fetch(`${base}/api/health?token=secret-token`);
       expect(byQuery.status).toBe(200);
 
-      // CORS 预检不需要 token
+      // CORS 预检不需要 token；但审查修复（M-1）后默认**零 CORS 头**——
+      // 跨源放行必须显式配置 corsOrigin，绝不反射任意来源
       const preflight = await fetch(`${base}/api/memories`, { method: "OPTIONS" });
       expect(preflight.status).toBe(204);
-      expect(preflight.headers.get("access-control-allow-headers")).toContain("Authorization");
+      expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
     } finally {
       srv.close();
     }
+  });
+
+  it("默认启动自动生成令牌：数据接口 401/带令牌 200，静态页免鉴权（审查 M-1）", async () => {
+    const srv = startServer(m, { port: 0, webDir });
+    await once(srv, "listening");
+    const port = (srv.address() as AddressInfo).port;
+    const base = `http://127.0.0.1:${port}`;
+    const saved = m.storage.getSetting("auth_token");
+    expect(saved).toBeTruthy();
+    try {
+      const denied = await fetch(`${base}/api/memories`);
+      expect(denied.status).toBe(401);
+      const ok = await fetch(`${base}/api/memories`, {
+        headers: { Authorization: `Bearer ${saved}` },
+      });
+      expect(ok.status).toBe(200);
+      // 静态控制台免鉴权（浏览器要先拿到页面才能填令牌）
+      const page = await fetch(`${base}/`);
+      expect(page.status).toBe(200);
+    } finally {
+      srv.close();
+    }
+  });
+
+  it("CORS 默认零放行；配置 corsOrigin 后才带放行头（审查 M-1）", async () => {
+    const srv = startServer(m, { port: 0, webDir, token: "t-cors" });
+    await once(srv, "listening");
+    const port = (srv.address() as AddressInfo).port;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+        headers: { Authorization: "Bearer t-cors" },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    } finally {
+      srv.close();
+    }
+    const srv2 = startServer(m, {
+      port: 0,
+      webDir,
+      token: "t-cors",
+      corsOrigin: "https://ok.example",
+    });
+    await once(srv2, "listening");
+    const port2 = (srv2.address() as AddressInfo).port;
+    try {
+      const pre = await fetch(`http://127.0.0.1:${port2}/api/memories`, { method: "OPTIONS" });
+      expect(pre.headers.get("access-control-allow-origin")).toBe("https://ok.example");
+    } finally {
+      srv2.close();
+    }
+  });
+
+  it("health 免鉴权仅用于探活，不暴露数据库路径（审查 M-1 配套）", async () => {
+    const res = await r("GET", "/api/health");
+    const text = JSON.stringify(res.body);
+    expect(text).not.toContain(".db");
+    expect(text).not.toContain("membrane.db");
   });
 
   it("REST recall 默认 brief（不返回 why，和 MCP/README 口径一致）", async () => {

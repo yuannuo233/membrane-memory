@@ -362,6 +362,10 @@ async function callTool(
 export function startMcpServer(engine: Membrane): void {
   const sessionId = randomUUID();
   let buf = "";
+  // 审查修复（M-7）：响应串行化——把每个请求的"处理+写回"接到同一条 Promise 链上，
+  // 保证 stdout 上的响应顺序与请求顺序一致（JSON-RPC 按 id 匹配虽然兼容乱序，
+  // 但按序写回对简单客户端/调试工具更友好，且不会交错写坏 stdout 行）。
+  let queue: Promise<void> = Promise.resolve();
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => {
     buf += chunk;
@@ -370,7 +374,8 @@ export function startMcpServer(engine: Membrane): void {
       const line = buf.slice(0, idx).trim();
       buf = buf.slice(idx + 1);
       if (line) {
-        void handleLine(engine, line, sessionId)
+        queue = queue
+          .then(() => handleLine(engine, line, sessionId))
           .then((out) => {
             if (out !== null) process.stdout.write(out + "\n");
           })

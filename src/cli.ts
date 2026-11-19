@@ -9,6 +9,7 @@
  * - membrane-memory relations A [B] 查关系（回答"谁和谁什么关系"）
  * - membrane-memory entities       列出实体
  * - membrane-memory embed-backfill 给老记忆批量补向量
+ * - membrane-memory embed-purge    清空全部向量与桶索引（换 embedding 模型后重建用）
  * - membrane-memory list/stats/doctor
  *
  * 零依赖：只用 node:sqlite（经引擎）+ 内置模块。用法/错误一律中文。
@@ -386,6 +387,26 @@ async function main(): Promise<void> {
       });
       console.log(`\n完成：待补 ${r.total} 条，成功 ${r.embedded} 条，失败 ${r.failed} 条。`);
       for (const f of r.failures.slice(0, 10)) console.log(`  失败样例: ${f}`);
+    } else if (cmd === "embed-purge") {
+      // 审查修复（M-4）：换 embedding 模型后旧维度会卡死新写入，提供清理出口。
+      // 不可逆操作：必须二次确认。
+      const stats = m.stats();
+      if (stats.current === 0 && stats.total === 0) {
+        console.log("记忆库为空，无需清理。");
+        return;
+      }
+      console.log(
+        `即将清空全部向量与桶索引（记忆正文不受影响，之后用 embed-backfill 重新回填）。`,
+      );
+      console.log(`当前库：${dbPath}`);
+      const answer = process.argv.includes("--yes") ? "y" : "";
+      if (answer !== "y") {
+        console.error("已取消。确认执行请加 --yes：membrane-memory embed-purge --yes");
+        return;
+      }
+      m.storage.purgeEmbeddings();
+      console.log("已清空。重新回填：membrane-memory embed-backfill");
+      return;
     } else if (cmd === "list") {
       const { kv } = opts(argv.slice(1));
       const rows = m.list({

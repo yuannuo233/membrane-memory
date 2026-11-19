@@ -5,10 +5,17 @@
  * 1) REST API：mem0 兼容子集 + Membrane 原生端点（供第三方工具/脚本调用）
  * 2) 静态托管 web/ 目录（Dashboard UI）
  *
- * 安全：默认绑定 127.0.0.1（本机环回）；--host 0.0.0.0 时必须给 token，否则拒绝启动。
- * Bearer token 校验：MEMBRANE_TOKEN 环境变量或构造参数。
+ * 安全（审查修复 M-1 后的口径）：
+ * - **数据接口（/api/* 与 /v1/*）一律要求 Bearer 令牌**，没有"本机绑定就免鉴权"的豁免——
+ *   否则用户浏览器里打开的任意网页都能借 127.0.0.1 读写/删除全部记忆（drive-by 攻击面）。
+ * - 没配置令牌时**自动生成** 24 字节随机令牌，保存到 settings（重启复用），控制台打印
+ *   带 token 的完整 URL；Dashboard 首次打开 ?token=xxx 即存 localStorage，之后走 Bearer。
+ * - **CORS 默认零放行**（同源控制台不需要 CORS 头）；需要跨源时用
+ *   MEMBRANE_CORS_ORIGIN / --cors-origin 显式指定 Origin，绝不反射任意来源。
+ * - 默认绑定 127.0.0.1；改绑 0.0.0.0 时控制台给出安全警告。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname, resolve, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,7 +40,10 @@ import type { MemoryKind } from "./types.js";
 export interface ServerOptions {
   port?: number;
   host?: string;
+  /** 访问令牌；缺省时自动生成并持久化到 settings（推荐做法） */
   token?: string;
+  /** 跨源放行的指定 Origin（如 https://dash.example.com）；缺省=零 CORS 放行（审查修复 M-1） */
+  corsOrigin?: string;
   /** 静态资源目录（默认项目 web/） */
   webDir?: string;
   /** 结构化运行日志；不传则自动落到 `<db>.log` */
@@ -49,6 +59,7 @@ export interface RouteContext {
   host?: string;
   port?: number;
   tokenConfigured?: boolean;
+  corsOrigin?: string;
   version?: string;
 }
 
@@ -56,19 +67,21 @@ type ApiResult = { status?: number; body: unknown };
 
 /**
  * 统一的 JSON 响应。
- * CORS 用 `*`：本服务默认只绑 127.0.0.1，跨域风险由网络层兜住；
- * 绑 0.0.0.0 且配了 token 时，`*` 才能让浏览器类客户端正常调用
- * （写死 127.0.0.1 会导致远程访问被浏览器 CORS 拦截）。
+ * 审查修复（M-1）：默认**零 CORS 头**——数据接口一律要求令牌，任何网页都
+ * 不能借用户浏览器跨源读写本机记忆。需要跨源时由启动参数显式放行指定 Origin。
  */
-function json(res: ServerResponse, status: number, body: unknown): void {
+function json(res: ServerResponse, status: number, body: unknown, corsOrigin?: string): void {
   const payload = JSON.stringify(body);
-  res.writeHead(status, {
+  const headers: Record<string, string | number> = {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  });
+  };
+  if (corsOrigin) {
+    headers["Access-Control-Allow-Origin"] = corsOrigin;
+    headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,PUT,DELETE,OPTIONS";
+    headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
+  }
+  res.writeHead(status, headers);
   res.end(payload);
 }
 
@@ -185,9 +198,9 @@ export async function route(
     return { body: engine.stats() };
   }
   if (method === "GET" && urlPath === "/api/health") {
-    return {
-      body: { ok: true, service: "membrane-memory", version: VERSION, db: engine.storage.path },
-    };
+    // 审查修复（M-1 配套）：health 免鉴权仅用于探活，但**只暴露版本号**——
+    // 数据库路径等敏感信息在受令牌保护的 /api/admin/diagnostics 里
+    return { body: { ok: true, service: "membrane-memory", version: VERSION } };
   }
   // ---- 运维后台（给懂的人看；不返回任何记忆正文） ----
   if (method === "GET" && urlPath === "/api/admin/logs") {
@@ -463,10 +476,10 @@ export async function route(
 /** 启动 HTTP 服务 */
 export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnType<typeof createServer> {
   const host = opts.host ?? process.env["MEMBRANE_HOST"] ?? "127.0.0.1";
+  const corsOrigin = opts.corsOrigin ?? (process.env["MEMBRANE_CORS_ORIGIN"] || undefined);
+  // 审查修复（M-1）：令牌**永远必填**——没配置就自动生成 24 字节随机令牌并存入
+  // settings（重启复用，用户的 localStorage 不会失效）。不再有"本机绑定免鉴权"的口子。
   const token = opts.token ?? process.env["MEMBRANE_TOKEN"] ?? "";
-  if (host !== "127.0.0.1" && host !== "localhost" && !token) {
-    throw new MembraneError("E_TOKEN", "绑定非本机地址时必须设置 MEMBRANE_TOKEN（Bearer 认证）");
-  }
   const port = opts.port ?? Number(process.env["MEMBRANE_PORT"] ?? 8317);
   // web 目录定位：优先环境变量 → 显式参数 → 相对本文件(dist/server.js)的 ../web。
   // 关键：不能用 process.cwd()——用户可能从任意目录启动 CLI，那样 UI 会 404。
@@ -481,14 +494,26 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
     process.env["MEMBRANE_LOG_FILE"] ??
     (engine.storage.path === ":memory:" ? undefined : `${engine.storage.path}.log`);
   const logger = opts.logger ?? new MemoryLogger({ path: logPath });
+  // 首次启动：生成随机令牌并存 settings（重启复用，Dashboard 的 localStorage 不失效）
+  let authToken = token;
+  if (!authToken) {
+    const saved = engine.storage.getSetting("auth_token");
+    authToken = saved ?? randomBytes(24).toString("base64url");
+    if (saved !== authToken) engine.storage.setSetting("auth_token", authToken);
+  }
   const ctx: RouteContext = {
     logger,
     startedAt: Date.now(),
     host,
     port,
-    tokenConfigured: !!token,
+    tokenConfigured: true,
+    corsOrigin,
     version: VERSION,
   };
+  if (host !== "127.0.0.1" && host !== "localhost") {
+    logger.warn("server.exposed", { host });
+    console.warn(`[membrane] ⚠️ 绑定在 ${host}：局域网内任何设备都能访问本服务，请保管好访问令牌`);
+  }
 
   const server = createServer((req, res) => {
     const startedAt = Date.now();
@@ -497,30 +522,34 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
     let status = 500;
     void (async () => {
       try {
-        // CORS 预检必须早于鉴权：浏览器预检不会带 Authorization
+        // CORS 预检：默认零 CORS 头（审查修复 M-1——数据接口一律要令牌，
+        // 预检放行跨源等于给网页开读写通道）；配置 MEMBRANE_CORS_ORIGIN 后才带放行头
         if (method === "OPTIONS") {
-          res.writeHead(204, {
-            "Access-Control-Allow-Origin": "*",
+          const headers: Record<string, string | number> = {
             "Access-Control-Allow-Methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Authorization",
             "Access-Control-Max-Age": "86400",
-          });
+          };
+          if (corsOrigin) headers["Access-Control-Allow-Origin"] = corsOrigin;
+          res.writeHead(204, headers);
           res.end();
           return;
         }
-        const u = new URL(req.url ?? "/", `http://${host}`);
-        // 只锁数据接口；静态控制台必须能先加载，否则浏览器地址栏永远打不开
+        // 审查修复（M-3）：base 用固定字符串——绑定 "::" 等特殊地址时
+        // `http://${host}` 是非法 URL，每个请求都会在 new URL 抛异常（全 500）
+        const u = new URL(req.url ?? "/", "http://localhost");
+        // 只锁数据接口；静态控制台必须能先加载（浏览器要先拿到页面才能填 token）
         const isApiPath = u.pathname.startsWith("/api/") || u.pathname.startsWith("/v1/");
-        // token 校验（配了才要求）；用常量时间比较，避免时序侧信道。
-        // 兼容两种来源：Authorization: Bearer xxx（脚本/客户端），?token=xxx（浏览器首次打开后存 localStorage）
-        if (token && isApiPath) {
+        // 审查修复（M-1）：数据接口**一律要求令牌**（自动生成、无豁免）。
+        // 常量时间比较防时序侧信道；兼容 Bearer 头与 ?token= 两种来源。
+        if (isApiPath) {
           const auth = req.headers["authorization"];
           const qToken = u.searchParams.get("token");
           const provided = typeof auth === "string" ? auth : qToken ? `Bearer ${qToken}` : "";
-          if (!safeEqual(provided, `Bearer ${token}`)) {
+          if (!safeEqual(provided, `Bearer ${authToken}`)) {
             status = 401;
             logger.warn("http.auth_failed", { method, path: pathForLog });
-            json(res, 401, { error: "Unauthorized" });
+            json(res, 401, { error: "Unauthorized" }, corsOrigin);
             return;
           }
         }
@@ -539,7 +568,7 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
           res.end(readFileSync(file));
           return;
         }
-        json(res, status, result.body);
+        json(res, status, result.body, corsOrigin);
       } catch (e) {
         status = e instanceof MembraneError && e.code.startsWith("E_") ? 400 : 500;
         logger.error("http.error", {
@@ -548,7 +577,7 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
           status,
           code: e instanceof MembraneError ? e.code : "E_INTERNAL",
         });
-        json(res, status, { error: e instanceof Error ? e.message : String(e) });
+        json(res, status, { error: e instanceof Error ? e.message : String(e) }, corsOrigin);
       } finally {
         // 只记 API 请求，静态资源不刷屏；query/body 一律不落日志
         if (pathForLog.startsWith("/api/")) {
@@ -568,9 +597,22 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
     const actualPort = addr && typeof addr === "object" ? addr.port : port;
     ctx.port = actualPort;
     logger.info("server.start", { host, port: actualPort, db: engine.storage.path, logFile: logger.path });
-    console.log(`[membrane] REST + Dashboard 已启动：http://${host}:${actualPort}`);
-    console.log(`[membrane] 健康检查：http://${host}:${actualPort}/api/health`);
-    console.log(`[membrane] 运维后台：http://${host}:${actualPort}/#ops（日志 ${logger.path ?? "memory only"}）`);
+    const displayHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+    console.log(`[membrane] REST + Dashboard 已启动：http://${displayHost}:${actualPort}`);
+    console.log(`[membrane] 本机访问（令牌已自动生成并保存，重启不变）：`);
+    console.log(`  http://${displayHost}:${actualPort}/?token=${authToken}`);
+    console.log(`[membrane] 数据接口一律需要令牌（Bearer 头或 ?token=）；静态控制台免鉴权`);
+    if (corsOrigin) console.log(`[membrane] 跨源放行 Origin：${corsOrigin}`);
+    console.log(`[membrane] 运维后台：http://${displayHost}:${actualPort}/#ops（日志 ${logger.path ?? "memory only"}）`);
+  });
+  // 审查修复（M-5）：端口占用等启动错误给中文提示，不再甩原始堆栈
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`[membrane] 端口 ${port} 已被占用。换个端口：set MEMBRANE_PORT=8318 后重试。`);
+    } else {
+      console.error(`[membrane] 服务错误：${err.message}`);
+    }
+    process.exitCode = 1;
   });
   return server;
 }
