@@ -210,10 +210,9 @@ CREATE TABLE mcp_clients (
 ## 9. 安全与隐私
 
 - 全部本地单文件（membrane.db），无遥测、无上传；embedding 端点是唯一可选外发（用户显式配置）
-- **数据接口一律要求令牌（v0.2.6 审查修复 M-1）**：未配置时自动生成 24 字节随机令牌存 settings
-  并打印带 token 的完整 URL；改绑 0.0.0.0 时控制台给出局域网暴露警告。不再有"本机绑定免鉴权"的口子
-- **CORS 默认零放行（v0.2.6 审查修复 M-1）**：任何网页都能借用户浏览器跨源读写本机数据接口
-  （drive-by 攻击面）；需要跨源用 MEMBRANE_CORS_ORIGIN 显式指定 Origin，绝不反射任意来源/不设 `*`
+- REST 默认绑定 127.0.0.1；**数据接口一律要求令牌**：未配置时自动生成 24 字节随机令牌存 settings
+  并打印带 token 的完整 URL；改绑 0.0.0.0 时控制台给出局域网暴露警告
+- **CORS 默认零放行**：需要跨源用 MEMBRANE_CORS_ORIGIN 显式指定 Origin，绝不反射任意来源/不设 `*`
 - /api/health 免鉴权仅用于探活，只暴露版本号（数据库路径在受令牌保护的 diagnostics）
 - 单元测试必须覆盖：FTS 注入无害化、路径/配置边界、并发写（server.test 已含令牌/CORS 回归用例）
 
@@ -295,17 +294,11 @@ CREATE TABLE mcp_clients (
 - 环境备忘：Node v24.22.3 已在 `..\tools\nodejs\`（勿重装，node:sqlite 内置可用）；
   存储决策=弃 better-sqlite3 用 node:sqlite（零原生依赖）；npm 缓存必须指向 `tools\npm-cache`。
   npm 新策略会跳过 esbuild 的 postinstall（安全警告），实测不影响 vitest 运行。
-- ✅ **v0.2.6 安全审查版（2026-11-20，主智能体接手）**：独立只读审查全部 20 个源文件
-  （清单见工作区《Membrane问题清单.md》），16 项发现全部闭环：
-  - 🔴 M-1 数据接口默认无鉴权 + CORS `*`（网页 drive-by 可读/写/遗忘全部记忆）→ 令牌强制 +
-    自动生成持久化 + CORS 默认零放行（显式 Origin 才放行）+ health 不暴露数据库路径
-  - 🟠 M-3 绑定 IPv6/特殊 host 时 `new URL` 抛异常全 500 → base 固定 localhost
-  - 🟠 M-4 换 embedding 模型被旧维度卡死 → 新增 `embed-purge`（--yes 确认）+ `purgeEmbeddings()`
-  - 🟠 M-5 端口占用崩栈 → server `'error'` 事件中文提示
-  - 🟡 M-6 test 脚本不再嵌套 npm；M-7 MCP 响应按请求顺序串行写回；M-11 证据计数按候选查询；
-    M-12 变量上限注释修正 + 模糊单元截断；M-13 动词交替长分支前置 + tokenSet 注释同步
-  - 更正：清单 M-2（短碎片取代长事实）经复核 A 群已自行修复（tokenOverlap 分母改 max + 回归测试），撤销
-- 测试：**17 文件 227/227 全绿**（新增 purge 2 + server 安全回归 3）；tsc 0 错误；npm pack 通过。
+- ✅ **v0.2.6（2026-11-20）：安全加固**——数据接口一律要求令牌（未配置时自动生成并持久化）；
+  CORS 默认零放行（需要跨源用 MEMBRANE_CORS_ORIGIN 指定 Origin）；/api/health 不再暴露数据库路径；
+  新增 `embed-purge`（换 embedding 模型后清理旧维度）；MCP 响应按请求顺序写回；
+  证据计数按候选查询；若干注释/截断修正。详见 CHANGELOG v0.2.6。
+- 测试：**17 文件 227/227 全绿**；tsc 0 错误；npm pack 通过。
 
 ## 12. 交接规范（随时可交接的保证）
 
