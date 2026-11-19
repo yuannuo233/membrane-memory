@@ -13,6 +13,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DOCS = [
@@ -68,6 +69,19 @@ if (existsSync(testDir)) {
   }
 }
 FACT.tests = testCount;
+
+/** 仓库里所有启动脚本（.bat / .cmd / .ps1），逐一检查是否成了孤儿 */
+const trackedScripts = (() => {
+  try {
+    const out = execSync('git ls-files "*.bat" "*.cmd" "*.ps1"', {
+      cwd: root,
+      encoding: 'utf8',
+    });
+    return out.split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+})();
 
 for (const doc of DOCS) {
   const p = join(root, doc);
@@ -127,6 +141,52 @@ for (const doc of DOCS) {
   for (const m of text.matchAll(/version[- ]?(0\.\d+\.\d+)/gi)) {
     if (m[1] !== FACT.version) {
       problems.push(`${doc}: 版本号写作 ${m[1]}，package.json 是 ${FACT.version}`);
+    }
+  }
+}
+
+// 7) 启动脚本（.bat / .ps1 / .cmd）—— 最容易变成"没人管的孤儿文件"
+//
+// 教训来源：代码已到 v0.2.6，一键安装.bat 还停在 v0.1 时代——
+// 写死 E:\开源盛世 绝对路径、不显示版本号、调用已废弃命令。
+// 这些是用户双击时才会发现的，静态审查和单元测试都抓不到。
+//
+// 这里强制三条：
+//   a. 不得写死本机绝对路径（必须 %~dp0 自定位）
+//   b. 必须从 package.json 读版本，不得硬编码
+//   c. 不得调用已废弃的 CLI 命令
+const DEPRECATED_CLI = [
+  'getBySupersededBy',
+  'hardDelete',
+];
+for (const f of trackedScripts) {
+  const full = join(root, f);
+  if (!existsSync(full)) continue;
+  // GBK 脚本用 latin1 读，只为匹配 ASCII 路径与命令
+  const raw = readFileSync(full, 'latin1');
+
+  // a. 硬编码盘符路径
+  const absHits = [...raw.matchAll(/[A-Za-z]:\\[^\s"'\r\n]{3,}/g)].map((m) => m[0]);
+  const realAbs = absHits.filter(
+    (p) => !/^\w:\\Windows|^\w:\\Program Files|^\w:\\ProgramData/i.test(p),
+  );
+  // 只在 .bat/.cmd 里报；.ps1 允许出现示例路径
+  if (/\.(bat|cmd)$/i.test(f) && realAbs.length > 0) {
+    problems.push(
+      `${f}: 硬编码绝对路径（换机器即失效），应改用 %~dp0 —— ${[...new Set(realAbs)].slice(0, 3).join(', ')}`,
+    );
+  }
+
+  // b. 版本号读取
+  const hasVersionRead = /set \/p VER=|VERSION\s*=|package\.json.*version/i.test(raw);
+  if (!hasVersionRead) {
+    problems.push(`${f}: 没有读取/显示版本号的逻辑，用户看不出这是哪个版本`);
+  }
+
+  // c. 废弃命令
+  for (const dep of DEPRECATED_CLI) {
+    if (raw.includes(dep)) {
+      problems.push(`${f}: 调用了已删除的 API "${dep}"`);
     }
   }
 }
