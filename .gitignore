@@ -1,0 +1,27 @@
+## Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.tmp-test/
+
+## Runtime data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+## IDE / OS
+.vs/
+.idea/
+*.user
+.DS_Store
+
+## npm
+*.tgz
+npm-debug.log*
+
+## Local scratch (never published)
+_internal/
+reports/
+竞品调研/

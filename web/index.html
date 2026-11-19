@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Membrane · Memory Engine Console</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="app">
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">M</div>
+      <div>
+        <div class="brand-name">Membrane</div>
+        <div class="brand-sub">MEMORY ENGINE</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="overview"><span class="nav-ico">◫</span>Overview</button>
+      <button class="nav-item" data-view="ingest"><span class="nav-ico">＋</span>Ingest</button>
+      <button class="nav-item" data-view="recall"><span class="nav-ico">⌕</span>Recall</button>
+      <button class="nav-item" data-view="ledger"><span class="nav-ico">≡</span>Ledger</button>
+      <button class="nav-item" data-view="audit"><span class="nav-ico">◷</span>Audit Trail</button>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="status-dot"></div>
+      <div>
+        <div class="status-title">Engine Online</div>
+        <div class="status-sub" id="db-path">local://membrane.db</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 主内容 -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">TEMPORAL · LOCAL-FIRST · EXPLAINABLE</div>
+        <h1 id="view-title">Overview</h1>
+      </div>
+      <div class="topbar-meta">
+        <span class="chip">v0.1.0</span>
+        <span class="chip chip-ghost" id="health-chip">● healthy</span>
+      </div>
+    </header>
+
+    <!-- Overview -->
+    <section class="view" id="view-overview">
+      <div class="stat-grid" id="stat-grid">
+        <div class="stat-card"><div class="stat-label">TOTAL RECORDS</div><div class="stat-value" id="s-total">—</div><div class="stat-hint">all revisions</div></div>
+        <div class="stat-card"><div class="stat-label">ACTIVE</div><div class="stat-value accent" id="s-current">—</div><div class="stat-hint">valid_to = NULL</div></div>
+        <div class="stat-card"><div class="stat-label">SUPERSEDED</div><div class="stat-value" id="s-superseded">—</div><div class="stat-hint">replaced versions</div></div>
+        <div class="stat-card"><div class="stat-label">TOMBSTONES</div><div class="stat-value" id="s-deleted">—</div><div class="stat-hint">soft-deleted</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Distribution by Kind</h2><span class="panel-sub">memory taxonomy</span></div>
+        <div class="kind-bars" id="kind-bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Engine Signature</h2><span class="panel-sub">differentiators</span></div>
+        <div class="feature-grid">
+          <div class="feature"><div class="feature-k">Bi-temporal Model</div><div class="feature-v">valid_from / valid_to / superseded_by</div></div>
+          <div class="feature"><div class="feature-k">Explainable Recall</div><div class="feature-v">RRF fusion · 4-component score breakdown · why</div></div>
+          <div class="feature"><div class="feature-k">Zero Dependency</div><div class="feature-v">node:sqlite · no telemetry · single file</div></div>
+          <div class="feature"><div class="feature-k">CJK Bigram FTS5</div><div class="feature-v">unicode61 fallback avoided for Chinese</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ingest -->
+    <section class="view hidden" id="view-ingest">
+      <div class="panel">
+        <div class="panel-head"><h2>Ingest Pipeline</h2><span class="panel-sub">deduplicate → conflict detection → commit</span></div>
+        <div class="form-row"><label>Content</label><textarea id="in-content" rows="3" placeholder="e.g. 用户住在上海"></textarea></div>
+        <div class="form-grid">
+          <div class="form-row"><label>Kind</label><select id="in-kind"><option>fact</option><option>episode</option><option>preference</option><option>procedure</option></select></div>
+          <div class="form-row"><label>Subject</label><input id="in-subject" placeholder="用户"></div>
+          <div class="form-row"><label>Confidence</label><input id="in-conf" type="number" min="0" max="1" step="0.1" value="1"></div>
+          <div class="form-row"><label>Tags (comma)</label><input id="in-tags" placeholder="住址, 城市"></div>
+        </div>
+        <div class="form-actions"><label class="checkbox"><input type="checkbox" id="in-pin"> Pin (exempt from auto-supersede)</label><button class="btn primary" id="btn-ingest">Commit Memory</button></div>
+        <div class="result-box hidden" id="ingest-result"></div>
+      </div>
+    </section>
+
+    <!-- Recall -->
+    <section class="view hidden" id="view-recall">
+      <div class="panel">
+        <div class="panel-head"><h2>Hybrid Recall</h2><span class="panel-sub">FTS5 BM25 + RRF + temporal decay</span></div>
+        <div class="recall-bar"><input id="rc-query" placeholder="输入查询，例如：用户住在哪"><button class="btn primary" id="btn-recall">Search</button></div>
+        <div class="recall-opts">
+          <label>Filter kind <select id="rc-kind"><option value="">all</option><option>fact</option><option>episode</option><option>preference</option><option>procedure</option></select></label>
+          <label>Limit <input id="rc-limit" type="number" value="8" min="1" max="50"></label>
+          <label class="checkbox"><input type="checkbox" id="rc-asof-toggle"> asOf (historical snapshot)</label>
+          <label class="hidden" id="rc-asof-wrap"><input id="rc-asof" type="number" placeholder="unix ms"></label>
+        </div>
+        <div id="recall-results"></div>
+      </div>
+    </section>
+
+    <!-- Ledger -->
+    <section class="view hidden" id="view-ledger">
+      <div class="panel">
+        <div class="panel-head"><h2>Memory Ledger</h2><span class="panel-sub"><label class="checkbox inline"><input type="checkbox" id="ld-all"> include superseded &amp; tombstones</label></span></div>
+        <div class="table-wrap"><table id="ledger-table"><thead><tr><th>ULID</th><th>Kind</th><th>Content</th><th>Subject</th><th>Conf</th><th>Valid From</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Audit -->
+    <section class="view hidden" id="view-audit">
+      <div class="panel">
+        <div class="panel-head"><h2>Audit Trail</h2><span class="panel-sub">immutable operation log · supersession chain</span></div>
+        <div class="form-row inline-form"><label>Memory ID</label><input id="au-id" placeholder="paste a ULID from the ledger"><button class="btn" id="btn-audit">Trace</button></div>
+        <div id="audit-results"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

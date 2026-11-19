@@ -1,0 +1,55 @@
+﻿{
+  "name": "membrane-memory",
+  "version": "0.1.0",
+  "description": "membrane = mem + brain，记忆脑：时间感知、本地优先、可解释的 Agent 记忆引擎",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "membrane-memory": "./dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "web/",
+    "README.md",
+    "README.en.md",
+    "llms.txt",
+    "DESIGN.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && vitest run",
+    "doctor": "node dist/cli.js doctor",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "agent",
+    "memory",
+    "mcp",
+    "sqlite",
+    "temporal",
+    "local-first",
+    "explainable"
+  ],
+  "dependencies": {
+    "ulid": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}
