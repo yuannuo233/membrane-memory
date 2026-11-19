@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md#10-依赖白名单新增依赖需在此登记)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen.svg)](CHANGELOG.md)
-[![Version](https://img.shields.io/badge/version-0.1.4-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.5-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **时间感知、本地优先、可解释的 Agent 记忆引擎。**
@@ -27,8 +27,8 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 > 下方「[已知局限](#已知局限别踩坑)」把我们所有短板逐条写明了，建议先看完再决定用不用。
 > 我们不做"benchmark 刷到第一"的宣传——更看重数字能被你自己复现。
 
-> 📖 **不确定要不要用？** 看 [为什么用 Membrane](为什么用Membrane.md) —— 一页说清适用场景、
-> 与 mem0 / Hindsight / MemPalace 的诚实对比、以及我们明确做不到什么。
+> 📖 **不确定要不要用？** 看 [为什么用 Membrane](为什么用Membrane.md)（[English](why-membrane.md)）——
+> 一页说清适用场景、与 mem0 / Hindsight / MemPalace 的诚实对比、以及我们明确做不到什么。
 
 ---
 
@@ -248,7 +248,7 @@ README 里的数字全部来自 `membrane-memory doctor`——**换台机器跑�
 
 - [DESIGN.md](DESIGN.md) — 活文档：架构、数据模型、算法、进度清单（唯一事实源）
 - [CHANGELOG.md](CHANGELOG.md) — **每一版改了什么**（详细到"为什么是 bug、怎么修的、影响哪些文件"）
-- [为什么用 Membrane.md](为什么用Membrane.md) — **适不适合你，看完这篇就能判断**（含与主流方案的诚实对比）
+- [为什么用 Membrane.md](为什么用Membrane.md) / [English](why-membrane.md) — **适不适合你，看完这篇就能判断**（含与主流方案的诚实对比）
 - [适配配置/](适配配置/) — 各 AI 工具接入模板
 
 技术栈：TypeScript / Node `node:sqlite` / 零第三方运行时依赖（仅 `ulid`）。
