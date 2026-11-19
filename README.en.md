@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 # Membrane 🧠
 
@@ -230,6 +230,7 @@ Running the command writes a full report (JSON + text) locally; reproduce the nu
 ## Docs
 
 - [DESIGN.md](DESIGN.md) — living spec: architecture, data model, algorithms, progress (source of truth)
+- [CHANGELOG.md](CHANGELOG.md) — **what changed in each version** (why it was a bug, how it was fixed, which files were touched)
 - [适配配置/](适配配置/) — integration templates
 
 Stack: TypeScript / Node `node:sqlite` / zero runtime deps (except `ulid`).

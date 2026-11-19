@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 # Membrane 记忆脑 🧠
 
@@ -236,6 +236,7 @@ README 里的数字全部来自 `membrane-memory doctor`——**换台机器跑�
 ## 架构 & 文档
 
 - [DESIGN.md](DESIGN.md) — 活文档：架构、数据模型、算法、进度清单（唯一事实源）
+- [CHANGELOG.md](CHANGELOG.md) — **每一版改了什么**（详细到"为什么是 bug、怎么修的、影响哪些文件"）
 - [适配配置/](适配配置/) — 各 AI 工具接入模板
 
 技术栈：TypeScript / Node `node:sqlite` / 零第三方运行时依赖（仅 `ulid`）。

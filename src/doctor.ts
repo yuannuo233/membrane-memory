@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Doctor 自检（DESIGN.md 第 8 节）——把"数字可复现"落成可执行脚本。
  *
  * 三套剧本，全部确定性（注入固定时钟 + 内存库 + 固定数据）：
@@ -149,7 +149,7 @@ export function runDoctor(dbPath?: string): DoctorReport {
     { name: "跨会话持久性：重启后能召回", pass: crossSession.recalled, detail: crossSession.recalled ? "recalled" : "lost" },
   ];
   return {
-    version: "0.1.0",
+    version: "0.1.3",
     generatedAt: new Date(T0).toISOString(),
     deterministic: true,
     scenarios: { writeRecall, staleUpdate, crossSession },

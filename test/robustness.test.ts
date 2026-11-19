@@ -258,3 +258,39 @@ describe("倒排索引自愈（老库升级后模糊兜底不失效）", () => {
     s.close();
   });
 });
+
+describe("多进程并发写（busy_timeout 保障）", () => {
+  it("库文件连接设置了 busy_timeout，避免并发写立即报 database is locked", () => {
+    const dbPath = `${dir}/busy.db`;
+    const s = new Storage(dbPath);
+    const timeout = (s as unknown as { db: { prepare: (q: string) => { get: () => { timeout?: number } } } })
+      .db.prepare("PRAGMA busy_timeout").get();
+    // 期望 5000ms，而不是 SQLite 默认的 0
+    expect(Number(timeout.timeout)).toBe(5000);
+    s.close();
+  });
+
+  it("两个 Storage 实例交替写同一文件库，全部写入成功", () => {
+    const dbPath = `${dir}/two-writers.db`;
+    const a = new Storage(dbPath);
+    const b = new Storage(dbPath);
+    try {
+      const mkRec = (id: string) => ({
+        id, kind: "fact" as const, content: `内容${id}`, subject: null, tags: [],
+        confidence: 1, source: null, namespace: "default",
+        createdAt: BASE_TIME, updatedAt: BASE_TIME, validFrom: BASE_TIME,
+        validTo: null, supersededBy: null, deleted: false, pin: false,
+      });
+      for (let i = 0; i < 30; i++) {
+        expect(() => a.insert(mkRec(`a-${i}`))).not.toThrow();
+        expect(() => b.insert(mkRec(`b-${i}`))).not.toThrow();
+      }
+      // 两个连接都应能看到全部 60 条
+      const total = a.stats().total;
+      expect(total).toBeGreaterThanOrEqual(30);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+});

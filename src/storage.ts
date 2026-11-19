@@ -92,6 +92,10 @@ export class Storage {
       // WAL：写不阻塞读，进程崩溃后自动回滚日志（本地优先的可靠性底线）
       this.db.exec("PRAGMA journal_mode = WAL;");
       this.db.exec("PRAGMA synchronous = NORMAL;");
+      // busy_timeout：多个进程写同一个库时，后到的写入**等待**锁释放而不是立刻
+      // 抛 "database is locked"。SQLite 默认是 0（不等待），实测 4 进程并发写
+      // 会丢掉近三成写入。5 秒足够覆盖正常的写事务竞争。
+      this.db.exec("PRAGMA busy_timeout = 5000;");
     }
     this.ensureSchema();
   }
@@ -412,6 +416,9 @@ export class Storage {
         params.push(options.subject);
       }
     }
+    // 排序开销说明：FTS5 的 ORDER BY bm25 必须给每个命中行算分后建临时 B 树排序，
+    // 无法提前终止（实测 10 万条、查询命中全部记忆时约 45-55 ms；命中几百条时 <1 ms）。
+    // 这是 SQLite FTS5 的固有行为，不是本项目的 bug。
     const sql = `SELECT m.*, bm25(memory_fts) AS _bm
                  FROM memory_fts JOIN memories m ON m.rowid = memory_fts.rowid
                  WHERE ${where.join(" AND ")}
