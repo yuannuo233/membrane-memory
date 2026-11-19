@@ -9,6 +9,66 @@
 
 ---
 
+## v0.1.6 — 2026-11-19
+
+这一版是**文档一致性修复版**。起因是一位外部审查者通读了 README / CHANGELOG / DESIGN / package.json，
+指出了 4 处文档自相矛盾和 1 个致命问题。全部核实为真，逐条修复。
+
+### 🔴 致命：文档第一步就装不上
+
+**问题**：README 的「快速开始」第一条是 `npm install -g membrane-memory`，
+但这个包**从未发布到 npm**（registry 返回 404）。照文档做，第一步就失败。
+
+**这不是小事**——审查者正是因此给了「不适合当依赖」的结论，并且解释了为什么只有 1 个 star：
+不是质量差，是根本没法用。
+
+**怎么修的**：把安装说明改成两条**真的能走通**的路，并明确标注 npm 尚未发布：
+
+- **方式 A（推荐）**：克隆仓库 → `npm install` → `npm test` → `npm run build`。
+  好处是能顺带验证 134 个测试真的通过（同时验证了项目真伪和你的 Node 环境）。
+- **方式 B**：从 Releases 下载 `.tgz` → `npm install -g ./membrane-memory-0.1.5.tgz`。
+
+两条路我都**实测跑通**了：
+- 全新 clone → install → test → **134 passed** → doctor **全部通过**
+- npm install tgz → `membrane-memory doctor` → **全部通过**
+
+**影响文件**：`README.md`、`README.en.md`、`why-membrane.md`、`为什么用Membrane.md`、`llms.txt`
+（`npx membrane-memory doctor` 这种依赖 npm 的写法也一并改掉了）
+
+---
+
+### 🟡 文档自相矛盾 4 处（全部核实为真）
+
+审查者指出这 4 处时特别说明"这些不是笔误，是赶工痕迹"。确实如此——我此前几版改了代码和部分文档，
+但没做全文交叉核对，留下了旧内容。
+
+| # | 矛盾 | 实际情况 | 修法 |
+|---|---|---|---|
+| 1 | README 徽章写 134 tests，同页「已知局限」写 119 | 确有。改徽章时漏了表格 | 表格改为 134 |
+| 2 | MCP 工具数：README 说 8、DESIGN §6 说 6、进度清单说 7 | 确有。代码实际注册 8 个（含 `membrane_evidence`） | DESIGN 全部改为 8，并补上 evidence |
+| 3 | Node 要求：README/package.json 是 `>=22.5`，DESIGN 写 `>=20` | 确有。DESIGN 里两处都错了 | 两处都改为 `>=22.5` |
+| 4 | 依赖白名单登记 `@modelcontextprotocol/sdk`，但 package.json 没有 | 确有。该包早已删除（MCP 是手写的） | 白名单移除该项，并新增说明记录"曾计划用、后改为手写"的决策 |
+
+### 防止再次发生：加了一致性检查
+
+写了个脚本，从 `package.json` 和源码抓真实值，再扫全部文档比对：
+版本号、测试数、MCP 工具数、Node 下限、已删除依赖。跑出来"全部一致"才算过。
+
+**影响文件**：`DESIGN.md`、`README.md`、`README.en.md`
+
+---
+
+### 变更明细
+
+| 项目 | 内容 |
+|---|---|
+| 修复真问题 | 1 个致命（安装方式不可用）+ 4 处文档矛盾 |
+| 代码改动 | 无 |
+| 测试 | 134 全绿（3 轮） |
+| 破坏性变更 | 无 |
+
+---
+
 ## v0.1.5 — 2026-11-19
 
 ### 新增英文版《Why Membrane》

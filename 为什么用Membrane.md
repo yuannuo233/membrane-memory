@@ -88,14 +88,15 @@ Membrane 走第三条路：**一个 SQLite 文件 + 零依赖 + 完全离线**�
 ## 怎么开始
 
 ```bash
-# 1. 装（需要 Node >= 22.5）
-npm install -g membrane-memory
+# 1. 装（暂无 npm 包，需从源码构建；需要 Node >= 22.5）
+git clone https://github.com/yuannuo233/membrane-memory.git
+cd membrane-memory && npm install && npm test && npm run build
 
 # 2. 跑自检，确认在你机器上正常
-membrane-memory doctor
+node dist/cli.js doctor
 
 # 3. 接到你的 AI 工具（Claude Code / Cursor / Cline / AstrBot…）
-membrane-memory mcp
+node dist/cli.js mcp
 ```
 
 配置模板见 [适配配置/各工具接入配置.md](适配配置/各工具接入配置.md)。

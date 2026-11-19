@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md#10-依赖白名单新增依赖需在此登记)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen.svg)](CHANGELOG.md)
-[![Version](https://img.shields.io/badge/version-0.1.5-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.6-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **时间感知、本地优先、可解释的 Agent 记忆引擎。**
@@ -50,7 +50,7 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 
 | 项目 | 现状 | 风险 |
 |---|---|---|
-| **没有真实用户验证** | 119 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
+| **没有真实用户验证** | 134 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
 | **跨进程并发只有 WAL 兜底** | SQLite 单写者模型，多进程同时写会排队 | 个人用没问题；高并发场景会成瓶颈 |
 | **性能只测到 1000 条** | 1000 条写入/查询在秒级 | 10 万条以上未压测，可能变慢 |
 | **doctor 样本很小** | 召回 5 条 / 更新 8 组 | **是回归自检，不是 benchmark**，不能作为跨项目横向比较的依据 |
@@ -78,7 +78,7 @@ Agent 记忆领域已有不少成熟项目。Membrane 选择了一个不同的�
 | 记忆过时——问"现在住哪"却返回旧地址（StaleBench 论文专题研究） | **时间感知一等公民**：每条记忆有 `valid_from`/`valid_to`/`superseded_by` 取代链，支持 `asOf(t)` 历史时点查询 |
 | 召回是黑盒，"为什么给我这条？" | **可解释召回**：每条结果返回 `why` + 四项分数明细（全文 RRF / 向量 / 新鲜度 / 置信度） |
 | 接入要改代码适配各家 SDK | **MCP 内置**：一个 server 接入 WorkBuddy / zcode / Claude / Cursor / 反重力 / AstrBot 等主流工具 |
-| 性能数字难以自行复现 | **doctor 自检随包发布**：README 每个数字都来自 `npx membrane-memory doctor`，可自己跑 |
+| 性能数字难以自行复现 | **doctor 自检随包发布**：README 每个数字都来自 `doctor` 命令，克隆仓库即可自己跑 |
 
 ---
 
@@ -88,11 +88,36 @@ Agent 记忆领域已有不少成熟项目。Membrane 选择了一个不同的�
 
 需要 **Node ≥ 22.5**（内置 `node:sqlite`）。无需 `npm install` 拉原生模块。
 
+> ⚠️ **尚未发布到 npm**。`npm install -g membrane-memory` 现在会返回 404。
+> 请用下面两种方式之一安装；npm 发布后会第一时间更新本节。
+
+**方式 A：从源码构建（推荐，能顺带跑通测试确认可用）**
+
 ```bash
-npm install -g membrane-memory
+git clone https://github.com/yuannuo233/membrane-memory.git
+cd membrane-memory
+npm install        # 只装开发依赖（typescript/vitest/tsx），运行时依赖只有 ulid
+npm test           # 应该看到 134 passed
+npm run build
+node dist/cli.js doctor    # 应该全部通过
 ```
 
-或在本仓库双击 `一键安装.bat`（Windows，自动编译+建库+自检）。
+之后用 `node dist/cli.js <命令>`，或 `npm link` 后直接用 `membrane-memory <命令>`。
+
+**方式 B：下载 Release 里的 tgz 直接装**
+
+到 [Releases](https://github.com/yuannuo233/membrane-memory/releases) 下载
+`membrane-memory-x.y.z.tgz`，然后：
+
+```bash
+npm install -g ./membrane-memory-0.1.6.tgz
+membrane-memory doctor
+```
+
+Windows 用户也可以在本仓库双击 `一键安装.bat`（自动编译 + 建库 + 自检）。
+
+> 下面的命令示例假设你已经通过上述方式装好，`membrane-memory` 在 PATH 里。
+> 如果用的是方式 A 且没 `npm link`，把 `membrane-memory` 换成 `node dist/cli.js`。
 
 ### 2. 写一条、查一次
 

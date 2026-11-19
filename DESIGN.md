@@ -1,4 +1,4 @@
-﻿# Membrane 设计大纲（活文档）
+# Membrane 设计大纲（活文档）
 
 > **membrane = mem + brain，记忆脑**。时间感知、本地优先、可解释的 Agent 记忆引擎。
 > TypeScript / Node 实现，MIT 协议，`npx membrane-memory serve` 一条命令跑起来。
@@ -124,7 +124,7 @@ CREATE TABLE settings ( key TEXT PRIMARY KEY, value TEXT );
 |---|---|---|
 | MCP | stdio，`npx membrane-memory mcp` | 工具：remember / recall / forget / list / get / stats |
 | REST | `npx membrane-memory serve --port 8317` | **mem0 兼容子集**：POST /v1/memories（add）、POST /v1/memories/search、GET /v1/memories/{id}、GET /v1/memories/{id}/history——drop-in 替换 |
-| SDK/CLI | `import { Membrane } from "membrane-memory"`；CLI：add/search/list/export/doctor | Node 20+，ESM |
+| SDK/CLI | `import { Membrane } from "membrane-memory"`；CLI：add/search/list/export/doctor | Node ≥22.5，ESM |
 
 ## 7. 抽取管线（Ingest）
 
@@ -151,12 +151,15 @@ CREATE TABLE settings ( key TEXT PRIMARY KEY, value TEXT );
 - **存储（2026-11-19 决策）**：**采用 Node 内置 `node:sqlite`（DatabaseSync），弃用原计划的
   `better-sqlite3`**。理由：① 零原生依赖——npm install 不再下载预编译二进制，安装失败率归零，
   契合"本地优先、`npx` 一条命令跑起来"；② API 同步调用，与 better-sqlite3 体验一致；
-  ③ 供应链面更小。代价：要求 Node ≥22.5（本机开发环境 v24.22.3 LTS；engines 仍按大纲写 `>=20`，
-  运行时检测到缺 `node:sqlite` 时抛明确中文报错）。若未来要接 sqlite-vec 向量扩展，再回来重新评估。
-- `@modelcontextprotocol/sdk`（MCP stdio 接入；只用其低层 `Server` + `StdioServerTransport`，
-  不引 zod——工具 schema 直接写 JSON Schema，避免多拖一层依赖）
-- `ulid`（ID 生成）
-- 开发依赖：`typescript`、`vitest`、`tsx`。其余一律先讨论。
+  ③ 供应链面更小。代价：**要求 Node ≥22.5**（`node:sqlite` 从该版本起可用）。
+  `package.json` 的 `engines` 已如实写 `>=22.5.0`。若未来要接 sqlite-vec 向量扩展，再回来重新评估。
+- `ulid`（ID 生成）——**当前唯一的运行时依赖**
+- 开发依赖：`typescript`、`vitest`、`tsx`、`@types/node`。其余一律先讨论。
+
+> **已移除的依赖（2026-11-19）**：原计划用 `@modelcontextprotocol/sdk` 实现 MCP，
+> 后改为**零依赖手写 JSON-RPC**（只需 `initialize` / `tools/list` / `tools/call` / `ping`
+> 四个方法，手写更可控，也不必引 SDK 的整棵依赖树）。该包已从 `package.json` 删除，
+> `src/mcp.ts` 中确认无任何引用。
 
 ## 11. 进度清单（活文档核心——完成一项勾一项）
 
@@ -175,7 +178,7 @@ CREATE TABLE settings ( key TEXT PRIMARY KEY, value TEXT );
 ### M3 接入面（基本完成）
 - [x] REST（src/server.ts，零依赖 node:http）：mem0 兼容子集（/v1/memories + /search）+ 原生 /api/* + Bearer token（绑非本机地址时强制）+ 默认 127.0.0.1
 - [x] **Web 控制台**（web/index.html + app.css + app.js，深色仪表盘）：Overview/Ingest/Recall/Ledger/Audit 五视图，专业术语（RRF/Bi-temporal/Contamination 等）。`启动控制台.bat` 一键打开 http://127.0.0.1:8317
-- [x] MCP stdio server（**7 工具**：add/recall/forget/get/history/list/stats，零依赖手写 JSON-RPC）
+- [x] MCP stdio server（**8 工具**：add/recall/forget/get/history/list/evidence/stats，零依赖手写 JSON-RPC）
 - [x] CLI：add/search/list/stats/mcp（doctor 占位到 M4；export/serve 未做）
 - [x] Node SDK 出口（ESM + 类型，index.ts 已导出 Membrane/引擎函数/抽取）
 - 📦 配套：`一键安装.bat`（GBK+CRLF，实测通过）+ `适配配置/各工具接入配置.md` + `安装说明.md`

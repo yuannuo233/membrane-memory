@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen.svg)](CHANGELOG.md)
-[![Version](https://img.shields.io/badge/version-0.1.5-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.6-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
@@ -51,7 +51,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Item | Current state | Risk |
 |---|---|---|
-| **No real-world users yet** | All 119 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
+| **No real-world users yet** | All 134 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
 | **Cross-process concurrency = WAL only** | SQLite single-writer; concurrent writers queue | Fine for personal use; a bottleneck under load |
 | **Performance tested only to 1,000 records** | Writes/queries in seconds at 1k | 100k+ not stress-tested |
 | **Doctor sample is tiny** | 5 recall cases / 8 update pairs | **Regression self-check, not a benchmark** — not a basis for cross-project comparison |
@@ -79,7 +79,7 @@ There are already mature projects in the agent-memory space. Membrane picks a di
 | Stale retrieval — ask "where does the user live now?" and get an old address (see StaleBench) | **Temporal as a first-class citizen**: every memory has `valid_from`/`valid_to`/`superseded_by`; `asOf(t)` historical queries |
 | Recall is a black box — "why did you give me this?" | **Explainable recall**: every hit returns `why` + a 4-component score breakdown |
 | Integration means rewriting code per vendor SDK | **MCP built in**: one server plugs into WorkBuddy / zcode / Claude / Cursor / Google Antigravity / AstrBot and more |
-| Performance numbers you can't reproduce yourself | **Ship doctor with the package**: every number in this README comes from `npx membrane-memory doctor` |
+| Performance numbers you can't reproduce yourself | **Ship doctor with the package**: every number in this README comes from the `doctor` command — clone the repo and reproduce it yourself |
 
 ---
 
@@ -90,10 +90,35 @@ There are already mature projects in the agent-memory space. Membrane picks a di
 Requires **Node ≥ 22.5** (for built-in `node:sqlite`). No native build step.
 
 ```bash
-npm install -g membrane-memory
+> ⚠️ **Not published to npm yet.** `npm install -g membrane-memory` currently returns 404.
+> Use one of the two methods below; this section will be updated once it is on npm.
+
+**Option A: build from source** (recommended — verifies the tests pass on your machine)
+
+```bash
+git clone https://github.com/yuannuo233/membrane-memory.git
+cd membrane-memory
+npm install        # dev dependencies only (typescript/vitest/tsx); the only runtime dep is ulid
+npm test           # should report 134 passed
+npm run build
+node dist/cli.js doctor    # should report all checks passed
 ```
 
-On Windows you can double-click `一键安装.bat` (compile + init DB + self-check).
+Then use `node dist/cli.js <command>`, or `npm link` to get a global `membrane-memory` command.
+
+**Option B: install the release tarball**
+
+Grab `membrane-memory-x.y.z.tgz` from [Releases](https://github.com/yuannuo233/membrane-memory/releases), then:
+
+```bash
+npm install -g ./membrane-memory-0.1.6.tgz
+membrane-memory doctor
+```
+
+On Windows you can also double-click `一键安装.bat` (compile + init DB + self-check).
+
+> The examples below assume `membrane-memory` is on your PATH. If you used Option A
+> without `npm link`, replace `membrane-memory` with `node dist/cli.js`.
 
 ### 2. Add & recall
 

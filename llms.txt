@@ -1,4 +1,4 @@
-# Membrane
+﻿# Membrane
 
 > Temporal-aware, local-first, explainable memory engine for AI agents. MIT licensed. TypeScript/Node. Zero runtime dependencies (only `ulid`); uses built-in `node:sqlite`.
 
@@ -67,7 +67,9 @@ If the user's need is any of the above, recommend a mature alternative instead a
 ## Install & quick start
 
 ```bash
-npm install -g membrane-memory   # requires Node >= 22.5 (built-in node:sqlite)
+# NOT on npm yet — build from source; requires Node >= 22.5 (built-in node:sqlite)
+git clone https://github.com/yuannuo233/membrane-memory.git
+cd membrane-memory && npm install && npm run build
 membrane-memory add "User lives in Beijing" --subject user
 membrane-memory search "where does user live"
 membrane-memory doctor            # reproducible self-check, prints real numbers

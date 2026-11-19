@@ -1,4 +1,4 @@
-# Why Membrane?
+﻿# Why Membrane?
 
 > This page is not an advertisement. It is a **trade-off document**: who Membrane is for,
 > who it is *not* for, and where it falls short of established alternatives.
@@ -98,14 +98,15 @@ Full list in the [README's Known Limitations section](README.en.md#known-limitat
 ## Getting started
 
 ```bash
-# 1. Install (requires Node >= 22.5)
-npm install -g membrane-memory
+# 1. Install (not on npm yet — build from source; requires Node >= 22.5)
+git clone https://github.com/yuannuo233/membrane-memory.git
+cd membrane-memory && npm install && npm test && npm run build
 
 # 2. Run the self-check to confirm it works on your machine
-membrane-memory doctor
+node dist/cli.js doctor
 
 # 3. Connect your AI tool (Claude Code / Cursor / Cline / AstrBot …)
-membrane-memory mcp
+node dist/cli.js mcp
 ```
 
 Integration templates: [适配配置/各工具接入配置.md](适配配置/各工具接入配置.md) (Chinese).
