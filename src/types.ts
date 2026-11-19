@@ -55,6 +55,110 @@ export interface MemoryRecord {
   pin: boolean;
 }
 
+/**
+ * 实体类型（图检索用）。
+ * unknown = 规则没认出来，也允许——宁可有节点，不要丢关系。
+ */
+export type EntityType = "person" | "place" | "org" | "concept" | "unknown";
+
+/** 实体的合法取值清单（校验用） */
+export const ENTITY_TYPES: readonly EntityType[] = [
+  "person",
+  "place",
+  "org",
+  "concept",
+  "unknown",
+] as const;
+
+/** 实体节点（entities 表） */
+export interface GraphEntity {
+  /** 稳定 id（ULID） */
+  id: string;
+  /** 显示名，如 "张三"、"北京" */
+  name: string;
+  type: EntityType;
+  /** 命名空间（多租户隔离） */
+  namespace: string;
+  createdAt: number;
+}
+
+/** 手动传入的实体标注（不写 type 时由规则推断，推断不出就是 unknown） */
+export interface EntityInput {
+  name: string;
+  type?: EntityType;
+}
+
+/** 手动传入的关系（add() 或 link() 用） */
+export interface RelationInput {
+  /** 起点实体名；省略时取记忆的 subject（所以 add 里必须至少有 subject 才可省） */
+  from?: string | null;
+  /** 起点实体的类型（省略=保留原有或按规则推断） */
+  fromType?: EntityType;
+  /** 终点实体名 */
+  to: string;
+  /** 终点实体类型 */
+  toType?: EntityType;
+  /** 关系谓词（"同学" / "住在" / "工作于"）。建议用短名词或动宾短语 */
+  predicate: string;
+  /** 置信度 0~1，默认 1 */
+  confidence?: number;
+}
+
+/** 关系边（relations 表，有向） */
+export interface Relation {
+  id: string;
+  fromId: string;
+  toId: string;
+  predicate: string;
+  /** 这条关系是从哪条记忆抽出来的（溯源；手动 link 建立时为 null） */
+  memoryId: string | null;
+  confidence: number;
+  /** 关系也遵守时间感知：生效起始 */
+  validFrom: number;
+  /** 失效时刻；null=仍成立 */
+  validTo: number | null;
+  namespace: string;
+}
+
+/** 关系查询返回的可读视图（带实体名与拼好的中文句子） */
+export interface RelationView {
+  id: string;
+  from: string;
+  to: string;
+  fromType: EntityType;
+  toType: EntityType;
+  predicate: string;
+  memoryId: string | null;
+  confidence: number;
+  validFrom: number;
+  validTo: number | null;
+  /** 从 A 到 B 经过几跳（1=直接关系） */
+  hops: number;
+  /** 人话句子，如"张三 与 李四：同学" */
+  sentence: string;
+}
+
+/** 关系查询参数 */
+export interface RelationQueryOptions {
+  /** 历史时点：只看该时刻成立的关系 */
+  asOf?: number;
+  /** 最多跳几跳（默认 1；2~3 为多跳查询） */
+  maxHops?: number;
+  /** 命名空间，默认 default */
+  namespace?: string;
+  /** 返回条数上限，默认 32 */
+  limit?: number;
+}
+
+/** 图检索开关（MembraneOptions.graph） */
+export interface GraphOptions {
+  /**
+   * 写入时用规则从正文自动抽实体/关系（零成本、零 API）。
+   * 默认 true：不想要噪声就设 false，只用手动标注。
+   */
+  autoExtract?: boolean;
+}
+
 /** 新增记忆输入（除 content 外全部可省，校验规则见 src/model.ts） */
 export interface AddInput {
   content: string;
@@ -64,6 +168,17 @@ export interface AddInput {
   confidence?: number;
   source?: string | null;
   pin?: boolean;
+  /**
+   * 预先算好的向量（可选）。传了就在写入的同一事务里落 embeddings 表，
+   * 之后 recall({ queryVec }) 立刻能命中。用 embed()/addAsync() 算。
+   */
+  vec?: Float32Array | number[];
+  /** 主语的实体类型（不传则按规则推断，推断不出=unknown） */
+  subjectType?: EntityType;
+  /** 本条记忆里出现的其他实体（手动标注，优先于规则抽取） */
+  entities?: (string | EntityInput)[];
+  /** 本条记忆里的关系（手动标注，优先于规则抽取） */
+  relations?: RelationInput[];
   /** 支撑证据（原文引用）。溯源用，如 ["用户原话：我上周搬到上海了"] */
   evidence?: string[];
   /** 命名空间（多租户隔离）。默认 "default" */
@@ -97,6 +212,13 @@ export interface AddResult {
   keptBoth: MemoryRecord[];
   /** 人类可读的处理说明（中文） */
   note: string;
+  /**
+   * 向量落库结果：stored=已存 / skipped=维度与库内不一致被跳过 /
+   * none=没传向量（纯全文模式，零依赖底线不受影响）
+   */
+  embeddingStatus?: "stored" | "skipped" | "none";
+  /** 本次写入顺带建立的关系（手动传入或规则抽取） */
+  relations?: RelationView[];
 }
 
 /** 每条召回结果的分数明细（DESIGN.md 第 4 节：可解释召回） */
@@ -109,6 +231,11 @@ export interface ScoreBreakdown {
   /** 向量余弦排名 → RRF 分（无 embedding 管线时=0） */
   vecRank: number | null;
   rrfVec: number;
+  /** 关系（图）排名 → RRF 分（查询里没认出实体时=0） */
+  graphRank: number | null;
+  rrfGraph: number;
+  /** 命中的关系路径（人话，如"张三 --同学--> 李四"），无则 null */
+  graphPaths: string[] | null;
   /** 与查询的余弦相似度（无 embedding 时=null） */
   vecSim: number | null;
   /** 新鲜度 exp(-age_days / half_life)，age 从 valid_from 起算 */
@@ -121,7 +248,7 @@ export interface ScoreBreakdown {
   confidence: number;
   /** 支撑证据条数（0 表示无溯源） */
   evidenceCount: number;
-  /** 本次召回实际使用的四项权重 */
+  /** 本次召回实际使用的五项权重（缺失的分量已归零、其余按比例归一，和=1） */
   weights: RecallWeights;
 }
 
@@ -133,9 +260,11 @@ export interface RecallHit {
   /** 人类可读的入选理由（中文，逐项拼装） */
   why: string;
   breakdown: ScoreBreakdown;
+  /** 这条记忆命中的关系（图路证据），没命中则无此字段 */
+  relations?: RelationView[];
 }
 
-/** 四项权重（DESIGN.md 第 4 节，默认 0.4/0.3/0.2/0.1） */
+/** 五项权重（DESIGN.md 第 4 节）。默认 0.4/0.3/0.2/0.1/0.1，实际生效值按缺失分量归一 */
 export interface RecallWeights {
   /** 全文排名权重 */
   text: number;
@@ -145,6 +274,8 @@ export interface RecallWeights {
   time: number;
   /** 置信度权重 */
   conf: number;
+  /** 关系（图）排名权重 */
+  graph: number;
 }
 
 /** recall 的输入（query 必填，其余可省） */
@@ -168,6 +299,12 @@ export interface RecallOptions {
    * 不传则 vec 分量为 0，退化为纯全文检索（零依赖底线不变）。
    */
   queryVec?: Float32Array;
+  /** 手动指定查询涉及的实体名（默认由规则从 query 里认） */
+  entities?: string[];
+  /** 关闭图路（默认开启；没认出实体时本来也不会生效） */
+  noGraph?: boolean;
+  /** 图路最多几跳，默认 1 */
+  hops?: number;
   /**
    * 返回详细程度。默认 "brief"（省 token）；"full" 才带完整 breakdown 与 why。
    * ultra: 只有 {id, content, score}
@@ -240,6 +377,8 @@ export interface MembraneOptions {
   now?: () => number;
   /** 召回候选池大小（每路 topK 基数倍数），默认 8 */
   candidateFactor?: number;
+  /** 图检索开关（默认自动规则抽取开） */
+  graph?: GraphOptions;
 }
 
 /** OpenAI 兼容端点配置（唯一可外发的组件，用户显式配置才启用） */

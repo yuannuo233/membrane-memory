@@ -3,25 +3,20 @@
  *
  * 直写模式（add）零依赖；本文件是可选的"从大段文本提炼记忆"——
  * 调用用户配置的 OpenAI 兼容 /chat/completions，让 LLM 返回 JSON 候选数组，
- * 逐条走 Membrane.add 的去重/冲突检测，最后返回"存了什么/跳过什么/取代了谁"。
+ * 逐条走 Membrane 的去重/冲突检测，最后返回"存了什么/跳过什么/取代了谁"。
  *
  * 零依赖底线：没配 llm 时 extract() 抛明确中文错误，但 add/recall 全部照常工作。
  * fetch 可注入（便于单测不打真网络）。
+ *
+ * v0.2 起：入库走 addAsync()——配了 embeddingModel 时顺带把向量算好存进去，
+ * 于是"抽取的记忆"也能被试向量检索命中，不需要调用方自己补向量。
  */
 import { Membrane } from "./engine.js";
 import { MembraneError, validateKind } from "./model.js";
-import type { ExtractCandidate, ExtractResult, LlmConfig, MemoryKind } from "./types.js";
+import { embedText, postJson, type FetchLike } from "./llm.js";
+import type { ExtractCandidate, ExtractResult, MemoryKind } from "./types.js";
 
-/** 可注入的 fetch 签名（与全局 fetch 兼容） */
-export type FetchLike = (
-  url: string,
-  init?: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string;
-    signal?: AbortSignal;
-  },
-) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
+export type { FetchLike };
 
 /** 内置的抽取系统提示词（要求严格 JSON，便于稳定解析） */
 export const EXTRACT_SYSTEM_PROMPT = `你是一个记忆抽取助手。从用户给的文本中，抽取值得长期记住的明确事实、偏好、经历或流程。每条记忆输出为一个 JSON 对象，字段：
@@ -54,32 +49,6 @@ export function parseCandidates(raw: string): ExtractCandidate[] {
   return parsed as ExtractCandidate[];
 }
 
-/** 统一的 OpenAI 兼容 POST 调用（拼路径、Bearer 鉴权、错误码、超时） */
-async function postJson(
-  llm: LlmConfig,
-  path: string,
-  body: unknown,
-  errCode: string,
-  doFetch: FetchLike,
-  timeoutMs?: number,
-): Promise<unknown> {
-  const url = `${llm.baseUrl.replace(/\/+$/, "")}${path}`;
-  const controller = new AbortController();
-  const timer = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
-  try {
-    const resp = await doFetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${llm.apiKey}` },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!resp.ok) throw new MembraneError(errCode, `LLM 端点返回 HTTP ${resp.status}`);
-    return JSON.parse(await resp.text());
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 /**
  * 从文本抽取并入库。
  * @param membrane 目标引擎（须配置 llm，否则抛 E_NO_LLM）
@@ -92,8 +61,11 @@ export async function extract(
   opts: { injectFetch?: FetchLike } = {},
 ): Promise<ExtractResult> {
   const llm = membrane.llm;
-  if (!llm) {
-    throw new MembraneError("E_NO_LLM", "抽取模式需要先在 Membrane 构造时配置 llm");
+  if (!llm || !llm.model) {
+    throw new MembraneError(
+      "E_NO_LLM",
+      "抽取模式需要先在 Membrane 构造时配置 llm（含 model；CLI 用 MEMBRANE_LLM_MODEL 环境变量）",
+    );
   }
   const doFetch = opts.injectFetch ?? (globalThis.fetch as unknown as FetchLike);
   const payload = (await postJson(
@@ -133,14 +105,18 @@ export async function extract(
       }
     }
     try {
-      const addResult = membrane.add({
-        content: c.content,
-        kind,
-        subject: c.subject,
-        tags: c.tags,
-        confidence: c.confidence,
-        source: "extract",
-      });
+      // addAsync：配了 embeddingModel 就顺手算向量；没配等价于 add
+      const addResult = await membrane.addAsync(
+        {
+          content: c.content,
+          kind,
+          subject: c.subject,
+          tags: c.tags,
+          confidence: c.confidence,
+          source: "extract",
+        },
+        { injectFetch: opts.injectFetch },
+      );
       result.added.push(addResult);
     } catch (err) {
       result.skipped.push({
@@ -155,22 +131,12 @@ export async function extract(
 /**
  * 计算某条文本的 embedding（可选，供向量检索接入）。
  * 无 embeddingModel 配置返回 null；调用方据此降级到纯全文检索。
+ * 实现已搬到 llm.ts（避免 engine ↔ extract 循环依赖），这里保留同名入口。
  */
 export async function embed(
   membrane: Membrane,
   text: string,
   opts: { injectFetch?: FetchLike } = {},
 ): Promise<Float32Array | null> {
-  const llm = membrane.llm;
-  if (!llm?.embeddingModel) return null;
-  const doFetch = opts.injectFetch ?? (globalThis.fetch as unknown as FetchLike);
-  const payload = (await postJson(
-    llm,
-    "/embeddings",
-    { model: llm.embeddingModel, input: text },
-    "E_EMBED_HTTP",
-    doFetch,
-  )) as { data?: { embedding?: number[] }[] };
-  const vec = payload.data?.[0]?.embedding;
-  return vec ? new Float32Array(vec) : null;
+  return embedText(membrane.llm, text, { injectFetch: opts.injectFetch });
 }

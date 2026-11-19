@@ -17,15 +17,24 @@ export {
   normalizeTags,
   normalizeSubject,
   normalizeAddInput,
+  normalizeVec,
+  normalizeEntityType,
+  normalizeEntityName,
+  normalizePredicate,
   contentKey,
   MAX_CONTENT_LENGTH,
   MAX_SUBJECT_LENGTH,
+  MAX_ENTITY_NAME_LENGTH,
+  MAX_PREDICATE_LENGTH,
 } from "./model.js";
 export { Storage } from "./storage.js";
-export type { FtsHit, FtsSearchOptions, ListOptions, ListValidity } from "./storage.js";
-export { Membrane, cosine, rrfNormalized, freshness } from "./engine.js";
+export type { FtsHit, FtsSearchOptions, ListOptions, ListValidity, VectorScanOptions } from "./storage.js";
+export { Membrane, cosine, rrfNormalized, freshness, normalizeWeights } from "./engine.js";
 export { extract, embed, parseCandidates, EXTRACT_SYSTEM_PROMPT } from "./extract.js";
 export type { FetchLike } from "./extract.js";
+export { embedText, llmFromEnv, postJson } from "./llm.js";
+export { extractGraph, cleanEntityName, inferEntityType } from "./graph-extract.js";
+export type { RuleEntity, RuleRelation } from "./graph-extract.js";
 export { startServer, route } from "./server.js";
 export type { ServerOptions } from "./server.js";
 export { handleLine } from "./mcp.js";

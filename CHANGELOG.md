@@ -9,6 +9,148 @@
 
 ---
 
+## v0.2.0 — 2026-11-19
+
+这一版干两件事：**把向量检索从"接口留了个口子"变成真的能用**，以及**从零做图检索**。
+两条都守着同一条底线：不配任何外部服务时，行为与 v0.1 完全一致。
+
+### 1. 向量检索：原来只是"留了入口"，现在是真能用
+
+**原来的问题（三个）**：
+1. `embeddings` 表、`getAllEmbeddings()`、`cosine()` 都写好了，但**写入路径从来不落向量**——
+   `add()` 收不到向量，也不调 embedding，所以向量这一路永远是空的。文档里说"可选向量"，
+   实际等于"你自己把向量塞进数据库吧"，没人会这么干。
+2. `getAllEmbeddings()` 一次性把全库向量读进内存再算余弦。几百条无所谓，几万条时这就是
+   一个 O(N·dim) 的内存炸弹——**库越大越占内存，而且每次查询都重算一遍**。
+3. 老库里的记忆没有向量，也没有任何回填手段。
+
+**怎么修的**：
+
+| 改动 | 说明 | 文件 |
+|---|---|---|
+| `AddInput.vec` | 传入预算好的向量，在**写入的同一个事务**里 `upsertEmbedding`——不会出现"记忆写进去了、向量没写进去"的半截状态 | `types.ts`、`engine.ts` |
+| `addAsync()` | 配上 `MEMBRANE_EMBED_MODEL` 后自动调 `/embeddings` 算完再走 `add()`；**网络失败 catch 住照常写**，note 写"⚠️ 向量计算失败（…），本次按纯全文写入" | `engine.ts`、`llm.ts` |
+| `recallAsync()` | 查询侧同理：先算 query 向量，失败就降级纯全文，绝不抛错 | 同上 |
+| `backfillEmbeddings()` | 老库显式回填（不放在启动时自动跑，避免一次启动卡十几分钟）；没配模型抛 `E_NO_EMBED_MODEL` 并给中文说明 | 同上 |
+| `setVector()` | 给单条记忆补向量；维度与库内不一致抛 `E_VECTOR_DIM` | 同上 |
+| **维度守卫** | 库内已有向量但本次维度不同 → `embeddingStatus="skipped"` + note 提示"勿混用两套 embedding 模型"。混用会让余弦恒为 0，比没有向量更糟 | `engine.ts` |
+| `Storage.scanEmbeddings()` | 用 `rowid > ?` 的 **keyset 分页**（不是 OFFSET，翻页越深越慢）分批扫，默认 512 条一批，namespace/现行/asOf/kind/subject 过滤全部下推到 SQL；调用方只维护 `2×poolSize` 的 top-K 数组并逐批剪枝 | `storage.ts`、`engine.ts` |
+| `getEmbeddingsByIds()` | 只把最终 top-K 的向量取回来，400 一批切分规避 SQLite 变量上限 | `storage.ts` |
+
+**顺手修掉的一个隐性 bug**：v0.1 里向量候选是混进 `textRank` 的（按 `-sim` 当 bm25 排序），
+等于白送一份全文分——**有向量的记忆天然占便宜，这不是 RRF 融合，这是作弊**。
+现在 `gatherCandidates()` 返回分离的 `textHits / vecHits / graphHits`，`textRank` 只由全文路产生。
+
+### 2. 图检索：从零实现
+
+原来只有 memories 一张表，问"张三和李四什么关系"只能靠全文撞运气。
+
+**新增三张表**（`SCHEMA_VERSION` 1 → 2）：
+
+```sql
+entities(id, name, type, namespace, created_at)        -- 唯一索引 (namespace, name)
+relations(id, from_id, to_id, predicate, memory_id, confidence, valid_from, valid_to, namespace)
+memory_entities(memory_id, entity_id)
+```
+
+三个刻意选择：
+- **同名只留一个节点**（不按 type 唯一）。"苹果"是公司还是水果靠字符串分不出来，按 type 唯一会把同名
+  分裂成两个节点，一跳关系直接断掉。type 是**属性**，允许从 `unknown` 升级成具体类型。
+- **`relations.memory_id` 可溯源**：关系不是凭空长出来的，都能指回"从哪句话读出来的"。
+- **`relations.valid_from/valid_to`**：关系也遵守时间感知。记忆被取代/遗忘时，
+  `closeRelationsForMemory()` 把派生关系置 `valid_to`（**不删行**，`asOf` 仍可查当时的关系）。
+
+**抽取两条路**：
+1. **手动标注**（`AddInput.relations`）——最准，`confidence=1`。有手动标注时**完全跳过规则抽取**。
+2. **规则抽取**（`src/graph-extract.ts`）——只认 6 类高置信度中文句式：住在/位于、在X工作·任职·读书、
+   A是B的X、A的X是B、喜欢/爱、讨厌。每条规则显式声明 `aSlot/bSlot` 防语序抽反；槽位限 1~10 个汉字；
+   `cleanEntityName()` 去动词前缀与语气词、拒单字；代词（我/你/他/她…）映射到记忆 `subject`，
+   没有 subject 就**丢掉该关系**（宁可没有，也不造一个叫"我"的实体）。规则抽出 `confidence=0.7`。
+
+**查询**：`relations(a, b?, {maxHops, asOf, namespace})`
+- `relations("张三","李四")` → 两人之间的最短路径（无向 BFS，记录父边回溯整条链）
+- `relations("张三和李四是什么关系")` → 句子里认出两个已知实体就当成 (张三, 李四) 查，而不是退化成"张三的一跳邻居"
+- 只给 A → 返回一跳邻居（两个方向都算）
+
+**融进统一打分（而不是另开一个接口走另一套逻辑）**：`graphCandidates()` 用"实体名是 query 子串"认种子
+（纯本地字符串匹配，不调模型）→ BFS 最多 3 跳 → 按 `relation.memoryId` 分组、命中边数多者强 →
+作为 `rrfGraph` 第五项参与总分。**所以"词面完全对不上、但关系对得上"的记忆也能被召回**，
+`why` 里写清是哪条路径（`关系第 k 名（甲 --谓词--> 乙）`）。
+
+### 3. 权重模型改成"五项相对权重 + 按缺失分量归一"
+
+`DEFAULT_WEIGHTS = {text:0.4, vec:0.3, time:0.2, conf:0.1, graph:0.1}` 视为**相对权重**。
+运行时 `normalizeWeights(w, {vec: present, graph: present})` 把"这一路没有候选"的分量归零、
+其余按比例摊到和=1，于是：
+- 分数上界**恒为 1.0**（不会因为加了第五路就突破 1）
+- **不配向量时行为与 v0.1 完全一致**——原有 133 个测试一行没改就全绿，doctor 原三项数字一字未变
+
+### 4. 接入面：CLI / MCP / REST 三处都接线
+
+| 面 | 新增 |
+|---|---|
+| CLI | `relations`（别名 `graph`）、`link`、`entities`、`embed-backfill`；`add`/`search` 改走 `addAsync`/`recallAsync`；`--hops`、`--no-graph`、`--no-embed` |
+| MCP | 工具 8 → **10**：新增 `membrane_link`、`membrane_relations`；`membrane_add` 支持 entities/relations/embedding/embed/subjectType；`membrane_recall` 支持 entities/hops/noGraph；`initialize` 的 version 改 0.2.0 |
+| REST | `GET/POST /api/relations`、`GET /api/entities`；`POST /api/memories` 接受 embedding/entities/relations/subjectType/embed；`POST /api/recall` 走 `recallAsync` |
+
+顺带修了一个 REST 的静默 bug：GET query 值永远是字符串，原代码写 `typeof x === "number"` 判断，
+所以 `?limit=5` 这类参数**从来没生效过**。新增 `num()` 帮手统一转换。
+
+### 5. 新文件 `src/llm.ts`（解决循环依赖）
+
+`engine` 需要调 `embedText`，而 `embedText` 原来在 `extract.ts` 里，`extract.ts` 又 import `engine` ——
+循环依赖。把 `postJson` / `embedText` / `llmFromEnv` 抽到 `llm.ts`（纯函数、不碰 engine），
+`extract.ts` 保留 `embed()` 兼容包装。
+
+`llmFromEnv()` 读 `MEMBRANE_LLM_BASE_URL` / `MEMBRANE_LLM_API_KEY` / `MEMBRANE_LLM_MODEL` /
+`MEMBRANE_EMBED_MODEL` / `MEMBRANE_LLM_TIMEOUT_MS`；没配 baseUrl 或 apiKey 就返回 `undefined`，
+**默认零依赖的行为一点没变**。
+
+### 6. doctor 扩到 5 剧本 7 项检查
+
+新增两个**完全离线**的剧本（不调真 embedding 端点，所以任何机器数字都一样、断网也不会让 CI 变红）：
+
+- **剧本 4 · 向量检索**：4 条手工单位向量，用 `zzzz-vector-only-zzzz` 这种全文绝对搜不到的假词逼向量路
+  独立发现候选 → 余弦 1.00、vec 分量参与打分、5ms
+- **剧本 5 · 图检索**：手动标注两条关系 → 直接答出"张三 与 李四：同学"、张三→腾讯两跳 2 条边、图路参与打分、4ms
+
+原三项数字（100% / 88% / 0%）保持不变——这是"没破坏旧行为"最直接的证据。
+
+### 7. 测试
+
+新增 `test/vector.test.ts`（16）与 `test/graph.test.ts`（26），**175/175 全绿**（10 个文件）。
+`test/mcp.test.ts` 的工具数断言 8 → 10。
+
+写测试时抓到两个真 bug（都已修）：
+- `cleanEntityName()` 的"去动词前缀"把"**用户**"削成"户"（"用"在动词表里），单字被拒 → 整条关系被丢。
+  改成"削完只剩 1 个字就保留原样"。
+- `resolve()` 先做长度校验再判代词，"我/他/她"都是单字，永远过不了校验 → 代词映射等于没实现。
+  改成先判代词。
+
+另修了 `scripts/check-consistency.mjs`：测试文件名原来是硬编码 8 个，加新测试文件它**数不到**，
+于是文档里的用例数一改就误报。改成动态扫 `test/*.test.ts`。
+
+### 8. 破坏性变更
+
+**没有对外破坏性变更**，但有三处行为变化值得知道：
+
+| 变化 | 影响 | 怎么应对 |
+|---|---|---|
+| 数据库 schema 1 → 2 | 老库第一次打开会**自动加表**（`IF NOT EXISTS` 加法式迁移，不重建、不丢数据） | 不需要手动迁；但**降级回 v0.1.x 会因版本号更大而拒绝打开**（`E_SCHEMA_VERSION`） | 
+| MCP 工具数 8 → 10 | 客户端如果硬编码了工具列表长度会感知到 | 正常 MCP 客户端按 `tools/list` 动态读取，无影响 |
+| `membrane_add` 的 `content` 语义没变，但多了 `relations` 等可选字段 | 老调用方式照旧可用 | 无需改动 |
+
+### 9. 变更明细
+
+| 项目 | 内容 |
+|---|---|
+| 新功能 | 向量检索真正可用（写入/查询/回填/分批扫描）、图检索（三表 + 抽取 + 多跳 + 融分） |
+| 修复真问题 | 3 个（向量从不落库、全量读向量内存炸弹、向量候选蹭全文分）+ 2 个（REST 数字参数从未生效、规则抽取名字被削坏） |
+| 新增文件 | `src/llm.ts`、`src/graph-extract.ts`、`test/vector.test.ts`、`test/graph.test.ts` |
+| 修改文件 | `src/types.ts`、`config.ts`、`model.ts`、`storage.ts`、`engine.ts`、`extract.ts`、`mcp.ts`、`server.ts`、`cli.ts`、`index.ts`、`doctor.ts`、`scripts/check-consistency.mjs`、`test/mcp.test.ts`、`package.json`、六份文档 |
+
+---
+
 ## v0.1.9 — 2026-11-19
 
 ### Node 下限最终定为 24（v0.1.8 的 22.12 又错了）

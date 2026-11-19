@@ -1,6 +1,6 @@
 ﻿{
   "name": "membrane-memory",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "Temporal-aware, local-first, explainable memory engine for AI agents. Zero dependencies, single SQLite file, MCP server included.",
   "type": "module",
   "license": "MIT",
@@ -33,8 +33,6 @@
     "llms.txt",
     "DESIGN.md",
     "CHANGELOG.md",
-    "为什么用Membrane.md",
-    "why-membrane.md",
     "LICENSE"
   ],
   "engines": {

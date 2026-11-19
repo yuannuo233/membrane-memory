@@ -4,7 +4,7 @@
 
 - Repository: https://github.com/yuannuo233/membrane-memory
 - Package: `membrane-memory`
-- Version: 0.1.6
+- Version: 0.2.0
 - License: MIT
 - Language: TypeScript, runs on Node.js >= 24 (node:sqlite is flag-gated below 24)
 
@@ -18,22 +18,25 @@ Membrane gives AI agents persistent memory with three differentiating properties
 ## Features
 
 - Temporal model: `valid_from` / `valid_to` / `superseded_by` chains, `asOf(t)` historical queries
-- Explainable recall: per-hit `why` plus a 4-component score breakdown
+- Explainable recall: per-hit `why` plus a 5-component score breakdown (text RRF / vector / graph path / freshness / confidence)
+- Graph retrieval: `entities` + `relations` + `memory_entities` tables, one-hop and multi-hop traversal, relations obey `asOf(t)`
+- Rule-based entity/relation extraction for 6 Chinese sentence patterns (manual `relations` always wins)
+- Optional vector search: OpenAI-compatible `/embeddings` via env vars, or pass precomputed `vec`/`queryVec`; a failed embedding never blocks a write; `embed-backfill` for older DBs
 - Configurable conflict policy: `supersede` / `keep-both` / `error`, with `pin` protection
 - Evidence chain: supporting quotes and evidence counts per memory
 - Multi-tenant isolation via `namespace`
 - Fuzzy recall via an inverted index (`char_index`), handles non-contiguous terms
-- Four interfaces: SDK, CLI, MCP server (8 tools), REST + web console
+- Four interfaces: SDK, CLI, MCP server (10 tools), REST + web console
 - Token-aware output: `ultra` / `brief` / `full` detail levels
 
 ## Known limitations
 
-- No graph retrieval.
-- No built-in vector search (opt-in `queryVec` only).
-- No entity extraction.
+- Graph extraction is rule-based and narrow: only 6 sentence patterns; annotate `relations` manually for accuracy.
+- Vector search needs an embedding endpoint (or precomputed vectors) — no built-in model, by design.
+- Entity typing is heuristic (suffix rules, surname list); wrong types never affect recall, only readability.
 - Multi-process concurrency: SQLite single-writer; concurrent writers wait up to 5s, then fail.
 - Only Chinese and English tokenization verified.
-- 133 tests, all authored by the maintainer; no independent third-party validation yet.
+- 175 tests, all authored by the maintainer; no independent third-party validation yet.
 - Default weights and half-lives are untuned heuristics.
 
 ## Install & quick start
@@ -48,25 +51,25 @@ membrane-memory doctor            # reproducible self-check, prints real numbers
 ```
 
 Library: `import { Membrane } from "membrane-memory";`
-Methods: `add(input) -> AddResult`, `recall(options) -> RecallHit[]`, `forget(id)`, `get(id)`, `history(id)`, `list(options)`, `stats()`.
+Methods: `add(input) -> AddResult`, `recall(options) -> RecallHit[]`, `forget(id)`, `get(id)`, `history(id)`, `list(options)`, `stats()`. v0.2 adds async variants `addAsync` / `recallAsync` / `backfillEmbeddings` (auto embeddings) and graph APIs `relations(a, b?, opts)`, `link(input)`, `listEntities(ns)`, `entitiesFor(memoryId)`.
 
 ## Interfaces
 
 - **SDK**: ESM + full TypeScript types (`.d.ts` shipped).
-- **CLI**: `add / search / list / stats / mcp / serve / doctor`.
-- **MCP server**: `membrane-memory mcp` (stdio, 8 tools: membrane_add / recall / forget / get / history / list / evidence / stats). Plug into any MCP client — WorkBuddy, zcode, Claude Code/Desktop, Cursor, Cline, Windsurf, Google Antigravity, AstrBot, etc.
+- **CLI**: `add / search / relations / link / entities / embed-backfill / list / stats / mcp / serve / doctor`.
+- **MCP server**: `membrane-memory mcp` (stdio, 10 tools: membrane_add / recall / forget / get / history / list / evidence / stats / link / relations). Plug into any MCP client — WorkBuddy, zcode, Claude Code/Desktop, Cursor, Cline, Windsurf, Google Antigravity, AstrBot, etc.
 - **REST**: `membrane-memory serve` — mem0-compatible subset (`POST /v1/memories`, `POST /v1/memories/search`, `GET /v1/memories/{id}`) + native `/api/*` + web console on `127.0.0.1:8317`.
 
 ## Key facts (verifiable, run doctor yourself)
 
-- Retrieval hit rate 100% (5/5), current@1 88% (7/8), contamination@5 0%, cross-session persistence OK — from `membrane-memory doctor` (fixed clock, deterministic). Read-path fuzzy resolver handles non-contiguous query terms (e.g. "养猫" matches "养了一只猫").
+- Retrieval hit rate 100% (5/5), current@1 88% (7/8), contamination@5 0%, cross-session persistence OK, vector-only hit with cosine 1.00, graph answer + 2-hop path OK — all from `membrane-memory doctor` (fixed clock, deterministic, fully offline). Read-path fuzzy resolver handles non-contiguous query terms (e.g. "养猫" matches "养了一只猫").
 - Chinese tokenization: custom CJK bigram FTS5 (SQLite's `unicode61` doesn't segment Chinese; `trigram` needs ≥3 chars).
 - Conflict detection: bigram containment `|A∩B|/min(|A|,|B|)` ≥0.55 supersede / ≥0.35 keep-both; configurable.
-- RRF: normalized `(K+1)/(K+rank)`, K=60. Score = w_text·rrf + w_vec·rrf + w_time·freshness + w_conf·confidence (defaults 0.4/0.3/0.2/0.1). When no query vector is supplied the remaining weights are renormalized so scores still top out at 1.0.
+- RRF: normalized `(K+1)/(K+rank)`, K=60. Score = w_text·rrfText + w_vec·rrfVec + w_graph·rrfGraph + w_time·freshness + w_conf·confidence (defaults 0.4/0.3/0.1/0.2/0.1 treated as RELATIVE weights). Missing components (no query vector, no graph hit) are zeroed and the rest rescaled to sum to 1, so scores still top out at 1.0.
 - Fuzzy fallback uses an inverted index (`char_index` table), not a full scan: 2.9x faster on average, 10x faster for rare character combinations.
 - Storage writes wrap the base row and its full-text index in one reentrant transaction, so a crash cannot leave a record that exists but cannot be found.
 - Concurrency: `PRAGMA busy_timeout = 5000`; verified 8 processes × 100 writes with zero loss.
-- 133 tests, all passing (verified by GitHub Actions on every push).
+- 175 tests, all passing (verified by GitHub Actions on every push).
 
 ## Docs
 

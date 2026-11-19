@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md#10-依赖白名单新增依赖需在此登记)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.1.9-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **时间感知、本地优先、可解释的 Agent 记忆引擎。**
@@ -23,12 +23,10 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 > 一句话：给 AI Agent 一个**过目不忘、还会告诉你"为什么想起这条"**的记忆脑。
 > 装上就能用——不联网、不下模型、不要 API key、零原生依赖。
 
-> 🔴 **诚实声明（请先读）**：这是 v0.1 早期项目，单人开发、133 个测试（CI 实时验证）、**尚无真实用户验证**。
+> 🔴 **诚实声明（请先读）**：这是 v0.2 早期项目，单人开发、175 个测试（CI 实时验证）、**尚无真实用户验证**。
 > 下方「[已知局限](#已知局限别踩坑)」把我们所有短板逐条写明了，建议先看完再决定用不用。
 > 我们不做"benchmark 刷到第一"的宣传——更看重数字能被你自己复现。
 
-> 📖 **不确定要不要用？** 看 [为什么用 Membrane](为什么用Membrane.md)（[English](why-membrane.md)）——
-> 一页说清适用场景、与 mem0 / Hindsight / MemPalace 的诚实对比、以及我们明确做不到什么。
 
 ---
 
@@ -40,9 +38,9 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 
 | 缺什么 | 影响 | 说明 |
 |---|---|---|
-| **没有图检索（graph）** | 记不住"张三和李四是什么关系"这类结构化关联 | 目前只有全文 + 时间两路检索。这是最大的功能差距，v0.2 才做 |
-| **没有向量检索的开箱支持** | 默认只能全文匹配（中文靠 bigram，同义词搜不到） | API 已留 `queryVec` 入口，但要你自己调 embedding 服务算好传进来；不配就是纯全文 |
-| **没有实体抽取** | 不会自动认出"北京"是地点、"张三"是人 | 需要你自己在 `subject` 里写清楚 |
+| **图检索只靠规则抽取，覆盖面窄** | 只认 6 类中文句式（住在/位于、在X工作读书、A是B的X、A的X是B、喜欢、讨厌） | 复杂句子抽不出关系。要准就手动标注 `relations`，规则只当"能抽就抽"的兜底 |
+| **向量检索要你自己提供 embedding 端点** | 不配就退回纯全文（中文靠 bigram，同义词搜不到） | 支持 OpenAI 兼容的 `/embeddings`（`MEMBRANE_LLM_BASE_URL` + `MEMBRANE_EMBED_MODEL`）；也可以用 `vec` / `queryVec` 自己算好传进来 |
+| **实体识别是猜的，不是模型抽的** | "北京"能靠"市/省/区"后缀认成地点，但"苹果"是公司还是水果分不出来 | 类型只是提示字段，判断错了不影响召回，只影响你读 `why` |
 | **没有多语言分词质量保证** | 中文（bigram）+ 英文（整词）能用；日文/韩文/小语种效果未验证 | 只测过中英文 |
 | **没有托管云** | 只能自己跑、自己备份 | 这是主动取舍（本地优先），但确实意味着换电脑要手动搬库 |
 
@@ -50,12 +48,12 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 
 | 项目 | 现状 | 风险 |
 |---|---|---|
-| **没有真实用户验证** | 133 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
+| **没有真实用户验证** | 175 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
 | **跨进程并发只有 WAL 兜底** | SQLite 单写者模型，多进程同时写会排队 | 个人用没问题；高并发场景会成瓶颈 |
 | **性能只测到 1000 条** | 1000 条写入/查询在秒级 | 10 万条以上未压测，可能变慢 |
 | **doctor 样本很小** | 召回 5 条 / 更新 8 组 | **是回归自检，不是 benchmark**，不能作为跨项目横向比较的依据 |
 | **单人维护** | 没有团队、没有 SLA | 提 issue 可能几天才回 |
-| **半衰期/权重等参数是拍脑袋定的** | 0.4/0.3/0.2/0.1 和 90/14/365/60 天，没有调优依据 | 你的使用场景可能需要自己调 |
+| **半衰期/权重等参数是拍脑袋定的** | 0.4/0.3/0.2/0.1/0.1 和 90/14/365/60 天，没有调优依据 | 你的使用场景可能需要自己调 |
 
 ### 明确不打算做的
 
@@ -63,7 +61,7 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 - ❌ 不内置 LLM（抽取/embedding 都要你自己配，我们不烧你的钱）
 - ❌ 不追求 benchmark 排名（我们只保证 doctor 数字可复现）
 
-> 如果你需要图检索、开箱即用的向量检索、或者大规模压测过的方案——
+> 如果你需要"开箱即用的高质量图检索、成熟的向量索引（HNSW/faiss）、已经过大规模压测的方案"——
 > 市面上已有成熟方案能满足这些需求，选它们就好。我们不装能。
 
 ---
@@ -76,7 +74,7 @@ Agent 记忆领域已有不少成熟项目。Membrane 选择了一个不同的�
 |---|---|
 | 默认依赖云端 embedding / LLM 才能工作 | **零遥测、零原生依赖**：Node 内置 `node:sqlite`，数据全在本机一个文件 |
 | 记忆过时——问"现在住哪"却返回旧地址（StaleBench 论文专题研究） | **时间感知一等公民**：每条记忆有 `valid_from`/`valid_to`/`superseded_by` 取代链，支持 `asOf(t)` 历史时点查询 |
-| 召回是黑盒，"为什么给我这条？" | **可解释召回**：每条结果返回 `why` + 四项分数明细（全文 RRF / 向量 / 新鲜度 / 置信度） |
+| 召回是黑盒，"为什么给我这条？" | **可解释召回**：每条结果返回 `why` + 五项分数明细（全文 RRF / 向量 / 图路径 / 新鲜度 / 置信度） |
 | 接入要改代码适配各家 SDK | **MCP 内置**：一个 server 接入 WorkBuddy / zcode / Claude / Cursor / 反重力 / AstrBot 等主流工具 |
 | 性能数字难以自行复现 | **doctor 自检随包发布**：README 每个数字都来自 `doctor` 命令，克隆仓库即可自己跑 |
 
@@ -97,7 +95,7 @@ Agent 记忆领域已有不少成熟项目。Membrane 选择了一个不同的�
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # 只装开发依赖（typescript/vitest/tsx），运行时依赖只有 ulid
-npm test           # 全部通过（当前 133 个用例）
+npm test           # 全部通过（当前 175 个用例）
 npm run build
 node dist/cli.js doctor    # 应该全部通过
 ```
@@ -110,7 +108,7 @@ node dist/cli.js doctor    # 应该全部通过
 `membrane-memory-x.y.z.tgz`，然后：
 
 ```bash
-npm install -g ./membrane-memory-0.1.9.tgz
+npm install -g ./membrane-memory-0.2.0.tgz
 membrane-memory doctor
 ```
 
@@ -181,6 +179,44 @@ m.history(id);                                      // → add / supersede 全�
 - `pin` 的记忆永不被自动取代
 - 软删除（forget）保留底稿，历史时点仍可查到
 
+### 图检索：能回答"张三和李四什么关系"
+
+```js
+// 手动标注（最准）：写记忆时顺手把关系标出来
+m.add({
+  content: "张三是李四的同学",
+  subject: "张三",
+  relations: [{ to: "李四", predicate: "同学", toType: "person" }],
+});
+
+// 规则抽取（不写也行）：认得出 6 类中文句式，抽不到就不硬抽
+m.add({ content: "用户住在北京", subject: "用户" });      // → 用户 --住在--> 北京
+
+m.relations("张三和李四");                  // → 张三 与 李四：同学
+m.relations("张三和李四是什么关系");         // 传整句也能自己认实体
+m.relations("张三", "腾讯", { maxHops: 2 }); // 两跳：张三→李四→腾讯
+```
+
+关系也是**时间感知**的：记忆被取代/遗忘时，它派生的关系一起失效，
+`asOf(t)` 仍能查到当时的关系。图路还会作为**第五路候选**进入统一打分，
+所以"词面完全对不上、但关系对得上"的记忆也能被召回——`why` 里会写清是哪条路径。
+
+### 向量检索：配一个 embedding 端点就能用
+
+```bash
+# OpenAI 兼容的 /embeddings 端点（不配就纯全文，行为与 v0.1 完全一样）
+set MEMBRANE_LLM_BASE_URL=https://api.openai.com/v1
+set MEMBRANE_LLM_API_KEY=sk-...
+set MEMBRANE_EMBED_MODEL=text-embedding-3-small
+
+membrane-memory add "用户住在北京" --subject 用户   # 自动算向量
+membrane-memory search "他老家在哪"                # 查询向量 + 全文 一起融合
+membrane-memory embed-backfill                     # 老库一次性回填（分批，内存可控）
+```
+
+也可以完全绕过网络：`add({ vec })` 传预算好的向量，`recall({ queryVec })` 传查询向量。
+**算向量失败绝不阻断写入**——记照样记，只是这条没有向量、退回纯全文。
+
 ### 省 token：别"写一次查一次"
 
 记忆操作是**工具调用**，每次调用都要花 token。正确用法是**批量 + 按需**：
@@ -219,18 +255,20 @@ m.recall({ query: "用户喜欢什么", detail: "full" });     // 只在调试�
 
 ### 可解释召回
 
-检索用 FTS5（中文 bigram 分词）+ 可选向量，RRF 融合后每条结果返回：
+检索用 FTS5（中文 bigram 分词）+ 可选向量 + 可选图路径，RRF 融合后每条结果返回：
 
-- `why`：人类可读的入选理由
-- `breakdown`：`rrfText` / `freshness` / `confidence` / `ageDays` / `halfLifeDays` / `weights`
+- `why`：人类可读的入选理由（含"关系第 k 名（甲 --谓词--> 乙）"这类图路解释）
+- `breakdown`：`rrfText` / `rrfVec` / `vecSim` / `rrfGraph` / `graphPaths` / `freshness` / `confidence` / `ageDays` / `halfLifeDays` / `weights`
+
+五项权重是**相对权重**，缺哪一路就把它归零、其余按比例摊到和=1，所以分数上界恒为 1.0。
 
 ### 接入面（三开门）
 
 | 门 | 命令 | 说明 |
 |---|---|---|
 | SDK | `import { Membrane }` | ESM + 完整 TypeScript 类型 |
-| CLI | `add / search / list / stats / mcp / serve / doctor` | 命令行全覆盖 |
-| MCP | `membrane-memory mcp` | stdio，8 工具，接入所有 Agent 工具 |
+| CLI | `add / search / relations / link / entities / embed-backfill / list / stats / mcp / serve / doctor` | 命令行全覆盖 |
+| MCP | `membrane-memory mcp` | stdio，10 工具，接入所有 Agent 工具 |
 | REST | `membrane-memory serve` | mem0 兼容子集（`/v1/memories`）+ Web 控制台，默认 127.0.0.1 |
 
 ---
@@ -241,16 +279,22 @@ README 里的数字全部来自 `membrane-memory doctor`——**换台机器跑�
 
 ```
 ╔══════════════════════════════════════════════╗
-║   Membrane Doctor · 可复现自检报告 v0.1.0      ║
+║   Membrane Doctor · 可复现自检报告 v0.2.0      ║
 ╚══════════════════════════════════════════════╝
 
 【剧本 1 · 写入召回】      命中率 100%  (5/5)
 【剧本 2 · 陈旧更新】      current@1 88%  (7/8)
                           contamination@5 0%
 【剧本 3 · 跨会话持久性】  重启召回 成功 ✓
+【剧本 4 · 向量检索】      纯向量命中 ✓  余弦 1.00  vec 分量已参与
+【剧本 5 · 图检索】        直接答"张三 与 李四：同学" ✓
+                          两跳可达 2 条边  图路已参与打分
 
 总体：全部通过 ✓
 ```
+
+剧本 4/5 **完全离线**：向量是手工构造的单位向量，关系是手动标注的，
+所以任何机器跑出来的数字都一样，也不会因为断网让 CI 变红。
 
 **指标口径说明**（避免误导）：
 - "写入召回"是**检索命中率**（query 与记忆是否匹配），不是端到端问答准确率。
@@ -273,7 +317,6 @@ README 里的数字全部来自 `membrane-memory doctor`——**换台机器跑�
 
 - [DESIGN.md](DESIGN.md) — 活文档：架构、数据模型、算法、进度清单（唯一事实源）
 - [CHANGELOG.md](CHANGELOG.md) — **每一版改了什么**（详细到"为什么是 bug、怎么修的、影响哪些文件"）
-- [为什么用 Membrane.md](为什么用Membrane.md) / [English](why-membrane.md) — **适不适合你，看完这篇就能判断**（含与主流方案的诚实对比）
 - [适配配置/](适配配置/) — 各 AI 工具接入模板
 
 技术栈：TypeScript / Node `node:sqlite` / 零第三方运行时依赖（仅 `ulid`）。

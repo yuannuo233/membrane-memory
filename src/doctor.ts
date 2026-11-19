@@ -34,6 +34,21 @@ export interface DoctorReport {
       latencyMs: number;
     };
     crossSession: { recalled: boolean; recordCount: number; latencyMs: number };
+    vector: {
+      entries: number;
+      recalledByVector: boolean;
+      vecSimilarity: number | null;
+      rrfVecApplied: boolean;
+      latencyMs: number;
+    };
+    graph: {
+      edges: number;
+      answered: boolean;
+      sentence: string;
+      multiHopEdges: number;
+      graphScoreApplied: boolean;
+      latencyMs: number;
+    };
   };
   summary: { passed: boolean; checks: { name: string; pass: boolean; detail: string }[] };
 }
@@ -112,6 +127,83 @@ function scenarioStaleUpdate(): DoctorReport["scenarios"]["staleUpdate"] {
   };
 }
 
+/**
+ * 剧本 4：向量检索（**离线确定性**）
+ *
+ * 不调真 embedding 端点：手工构造 4 维单位向量，语义=维度含义。
+ * 这样任何机器跑出来的数字都一样，既验证"写入带向量 → 召回命中"整条链路，
+ * 又不会因为断网/欠费让 CI 变红。
+ */
+function scenarioVector(): DoctorReport["scenarios"]["vector"] {
+  const t0 = Date.now();
+  const m = new Membrane({ dbPath: ":memory:", now: () => T0 });
+  const facts: [string, number[]][] = [
+    ["用户住在北京", [1, 0, 0, 0]],
+    ["用户喜欢喝咖啡", [0, 1, 0, 0]],
+    ["用户养了一只猫", [0, 0, 1, 0]],
+    ["用户会弹钢琴", [0, 0, 0, 1]],
+  ];
+  for (const [content, vec] of facts) {
+    m.add({ content, subject: "用户", kind: "fact", vec, at: T0 });
+  }
+  // 查询用一个"全文完全搜不到"的词，逼着向量路独立发现候选
+  const hits = m.recall({ query: "zzzz-vector-only-zzzz", queryVec: new Float32Array([1, 0, 0, 0]), limit: 3 });
+  const top = hits[0];
+  const recalledByVector = top !== undefined && top.memory.content.includes("北京");
+  const vecSimilarity = top?.breakdown.vecSim ?? null;
+  const rrfVecApplied = (top?.breakdown.rrfVec ?? 0) > 0;
+  const entries = m.stats().total;
+  m.close();
+  return { entries, recalledByVector, vecSimilarity, rrfVecApplied, latencyMs: Date.now() - t0 };
+}
+
+/**
+ * 剧本 5：图检索（**离线确定性**）
+ *
+ * 只用手动标注的关系（不依赖规则抽取得准不准），验证三件事：
+ *   1. "张三和李四是什么关系" 能直接答出来
+ *   2. 关系也遵守时间感知（这里只验存在性与跳数）
+ *   3. 图路能作为一路候选进入综合打分（rrfGraph > 0）
+ */
+function scenarioGraph(): DoctorReport["scenarios"]["graph"] {
+  const t0 = Date.now();
+  const m = new Membrane({ dbPath: ":memory:", now: () => T0 });
+  m.add({
+    content: "张三是李四的同学",
+    subject: "张三",
+    kind: "fact",
+    at: T0,
+    relations: [{ to: "李四", predicate: "同学", toType: "person" }],
+  });
+  m.add({
+    content: "李四在腾讯工作",
+    subject: "李四",
+    kind: "fact",
+    at: T0,
+    relations: [{ to: "腾讯", predicate: "工作于", toType: "org" }],
+  });
+
+  // 直接问关系（传整句也行：会自动从里面认实体）
+  const direct = m.relations("张三和李四是什么关系");
+  // 两跳：张三 → 李四 → 腾讯
+  const multi = m.relations("张三", "腾讯", { maxHops: 2 });
+  // 图路进综合打分
+  const hits = m.recall({ query: "张三和李四是什么关系", limit: 3 });
+  const graphScoreApplied = hits.some((h) => h.breakdown.rrfGraph > 0);
+
+  const result = {
+    edges: direct.length,
+    answered: direct.length > 0,
+    sentence: direct[0]?.sentence ?? "",
+    multiHopEdges: multi.length,
+    graphScoreApplied,
+    latencyMs: 0,
+  };
+  m.close();
+  result.latencyMs = Date.now() - t0;
+  return result;
+}
+
 /** 剧本 3：跨会话持久性（关库重开同一文件） */
 function scenarioCrossSession(path: string): DoctorReport["scenarios"]["crossSession"] {
   const t0 = Date.now();
@@ -141,18 +233,23 @@ export function runDoctor(dbPath?: string): DoctorReport {
   const writeRecall = scenarioWriteRecall();
   const staleUpdate = scenarioStaleUpdate();
   const crossSession = scenarioCrossSession(path);
+  const vector = scenarioVector();
+  const graph = scenarioGraph();
 
   const checks = [
     { name: "写入召回命中率 ≥ 80%", pass: writeRecall.hitRate >= 0.8, detail: `${(writeRecall.hitRate * 100).toFixed(0)}% (${writeRecall.hits}/${writeRecall.total})` },
     { name: "陈旧更新：current@1 ≥ 75%", pass: staleUpdate.successRate >= 0.75, detail: `${(staleUpdate.successRate * 100).toFixed(0)}% (${staleUpdate.currentReturned}/${staleUpdate.trials})` },
     { name: "contamination@5 = 0（无新旧混杂）", pass: staleUpdate.contaminationAt5 === 0, detail: `${(staleUpdate.contaminationAt5 * 100).toFixed(0)}%` },
     { name: "跨会话持久性：重启后能召回", pass: crossSession.recalled, detail: crossSession.recalled ? "recalled" : "lost" },
+    { name: "向量检索：写入带向量后能纯向量命中", pass: vector.recalledByVector && vector.rrfVecApplied, detail: `${vector.recalledByVector ? "hit" : "miss"} / rrfVec=${vector.rrfVecApplied ? ">0" : "0"}` },
+    { name: "图检索：能回答关系问题", pass: graph.answered, detail: graph.answered ? `"${graph.sentence}"` : "未答出" },
+    { name: "图检索：两跳可达 + 图路参与打分", pass: graph.multiHopEdges >= 2 && graph.graphScoreApplied, detail: `两跳 ${graph.multiHopEdges} 边 / rrfGraph ${graph.graphScoreApplied ? ">0" : "0"}` },
   ];
   return {
-    version: "0.1.9",
+    version: "0.2.0",
     generatedAt: new Date(T0).toISOString(),
     deterministic: true,
-    scenarios: { writeRecall, staleUpdate, crossSession },
+    scenarios: { writeRecall, staleUpdate, crossSession, vector, graph },
     summary: { passed: checks.every((c) => c.pass), checks },
   };
 }
@@ -177,6 +274,19 @@ export function formatDoctorReport(r: DoctorReport): string {
   lines.push("【剧本 3 · 跨会话持久性】");
   lines.push(`  重启召回    ${r.scenarios.crossSession.recalled ? "成功 ✓" : "失败 ✗"}`);
   lines.push(`  记录数      ${r.scenarios.crossSession.recordCount}`);
+  lines.push("");
+  lines.push("【剧本 4 · 向量检索（离线确定性）】");
+  lines.push(`  写入带向量  ${r.scenarios.vector.entries} 条`);
+  lines.push(`  纯向量命中  ${r.scenarios.vector.recalledByVector ? "成功 ✓" : "失败 ✗"}`);
+  lines.push(`  余弦相似度  ${r.scenarios.vector.vecSimilarity === null ? "无" : r.scenarios.vector.vecSimilarity.toFixed(2)}`);
+  lines.push(`  vec 分量    ${r.scenarios.vector.rrfVecApplied ? "已参与打分 ✓" : "未参与 ✗"}`);
+  lines.push(`  耗时        ${r.scenarios.vector.latencyMs} ms`);
+  lines.push("");
+  lines.push("【剧本 5 · 图检索】");
+  lines.push(`  直接答关系  ${r.scenarios.graph.answered ? "成功 ✓" : "失败 ✗"}  ${r.scenarios.graph.sentence}`);
+  lines.push(`  两跳可达    ${r.scenarios.graph.multiHopEdges} 条边`);
+  lines.push(`  图路打分    ${r.scenarios.graph.graphScoreApplied ? "已参与 ✓" : "未参与 ✗"}`);
+  lines.push(`  耗时        ${r.scenarios.graph.latencyMs} ms`);
   lines.push("");
   lines.push("【验收检查】");
   for (const c of r.summary.checks) lines.push(`  ${c.pass ? "✓" : "✗"} ${c.name} — ${c.detail}`);

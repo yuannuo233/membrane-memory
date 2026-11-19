@@ -40,15 +40,17 @@ describe("MCP 协议", () => {
     expect((await rpc(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }))).result).toEqual({});
   });
 
-  it("tools/list 列出全部 8 个工具且 schema 合法", async () => {
+  it("tools/list 列出全部 10 个工具且 schema 合法", async () => {
     const r = await rpc(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }));
     const tools = (r.result as { tools: unknown[] }).tools as {
       name: string;
       inputSchema: { type: string };
     }[];
-    expect(tools).toHaveLength(8);
+    expect(tools).toHaveLength(10);
     expect(tools.map((t) => t.name)).toContain("membrane_add");
     expect(tools.map((t) => t.name)).toContain("membrane_recall");
+    expect(tools.map((t) => t.name)).toContain("membrane_link");
+    expect(tools.map((t) => t.name)).toContain("membrane_relations");
     expect(tools.map((t) => t.name)).toContain("membrane_evidence");
     for (const t of tools) expect(t.inputSchema.type).toBe("object");
   });

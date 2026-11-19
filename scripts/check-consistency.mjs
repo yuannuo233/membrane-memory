@@ -37,15 +37,14 @@ const FACT = {
   mcpTools: (mcpSrc.match(/name: "membrane_/g) || []).length,
 };
 
-/** 测试用例数：从测试文件里数 it( 出现次数 */
+/** 测试用例数：从测试目录里数 it( 出现次数（动态扫，新增测试文件不用手改这里） */
+import { readdirSync } from 'node:fs';
 let testCount = 0;
-for (const f of [
-  'engine.test.ts', 'extract.test.ts', 'mcp.test.ts', 'model.test.ts',
-  'robustness.test.ts', 'server.test.ts', 'storage.test.ts', 'tenant.test.ts',
-]) {
-  const p = join(root, 'test', f);
-  if (!existsSync(p)) continue;
-  testCount += (readFileSync(p, 'utf8').match(/^\s*it\(/gm) || []).length;
+const testDir = join(root, 'test');
+if (existsSync(testDir)) {
+  for (const f of readdirSync(testDir).filter((n) => n.endsWith('.test.ts')).sort()) {
+    testCount += (readFileSync(join(testDir, f), 'utf8').match(/^\s*it\(/gm) || []).length;
+  }
 }
 FACT.tests = testCount;
 

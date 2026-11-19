@@ -14,7 +14,7 @@ import { join, extname, resolve, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Membrane } from "./engine.js";
 import { MembraneError } from "./model.js";
-import type { MemoryKind } from "./types.js";
+import type { EntityType, MemoryKind, RelationInput } from "./types.js";
 
 export interface ServerOptions {
   port?: number;
@@ -95,6 +95,41 @@ function strList(v: unknown): string[] | undefined {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
 }
 
+/** GET 的 query 参数是字符串，POST 的是数字——统一取数（非法值返回 undefined） */
+function num(v: unknown): number | undefined {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** 解析实体类型（非法当未指定） */
+function parseEntityType(v: unknown): EntityType | undefined {
+  return v === "person" || v === "place" || v === "org" || v === "concept" || v === "unknown"
+    ? v
+    : undefined;
+}
+
+/** 解析手动标注的关系数组（脏项丢弃，不因为一条写错拒掉整条记忆） */
+function parseRelations(v: unknown): RelationInput[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: RelationInput[] = [];
+  for (const raw of v) {
+    if (!raw || typeof raw !== "object") continue;
+    const o = raw as Record<string, unknown>;
+    const to = typeof o["to"] === "string" ? o["to"] : "";
+    const predicate = typeof o["predicate"] === "string" ? o["predicate"] : "";
+    if (!to || !predicate) continue;
+    out.push({
+      from: typeof o["from"] === "string" ? o["from"] : null,
+      fromType: parseEntityType(o["fromType"]),
+      to,
+      toType: parseEntityType(o["toType"]),
+      predicate,
+      confidence: num(o["confidence"]),
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -149,31 +184,93 @@ export async function route(
   if (method === "POST" && urlPath === "/api/recall") {
     const query = typeof body.query === "string" ? body.query : "";
     if (!query) return { status: 400, body: { error: "query 必填" } };
-    const hits = engine.recall({
+    const hits = await engine.recallAsync({
       query,
       limit: typeof body.limit === "number" ? body.limit : undefined,
       asOf: typeof body.asOf === "number" ? body.asOf : undefined,
       kind: parseKind(body.kind),
       subject: typeof body.subject === "string" ? body.subject : undefined,
       namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+      entities: strList(body.entities),
+      hops: typeof body.hops === "number" ? body.hops : undefined,
+      noGraph: body.noGraph === true,
     });
     return { body: { results: hits, count: hits.length } };
   }
   if (method === "POST" && urlPath === "/api/memories") {
     const content = typeof body.content === "string" ? body.content : "";
     if (!content) return { status: 400, body: { error: "content 必填" } };
-    const r = engine.add({
-      content,
-      kind: parseKind(body.kind),
-      subject: typeof body.subject === "string" ? body.subject : undefined,
-      tags: strList(body.tags),
-      confidence: typeof body.confidence === "number" ? body.confidence : undefined,
-      pin: body.pin === true,
-      evidence: strList(body.evidence),
-      namespace: typeof body.namespace === "string" ? body.namespace : undefined,
-      source: typeof body.source === "string" ? body.source : "rest",
-    });
+    // 向量既可以直接传（embedding 数组），也可以让服务端调 embedding 端点算（配了 model 时默认算）
+    const embedding = Array.isArray(body.embedding) ? body.embedding : undefined;
+    const entities = [
+      ...(strList(body.entities) ?? []),
+    ];
+    const relations = parseRelations(body.relations);
+    const r = await engine.addAsync(
+      {
+        content,
+        kind: parseKind(body.kind),
+        subject: typeof body.subject === "string" ? body.subject : undefined,
+        subjectType: parseEntityType(body.subjectType),
+        tags: strList(body.tags),
+        confidence: typeof body.confidence === "number" ? body.confidence : undefined,
+        pin: body.pin === true,
+        evidence: strList(body.evidence),
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        source: typeof body.source === "string" ? body.source : "rest",
+        vec: embedding as number[] | undefined,
+        entities: entities.length > 0 ? entities : undefined,
+        relations,
+      },
+      { embed: body.embed === false ? false : undefined },
+    );
     return { status: 201, body: r };
+  }
+
+  // ---- 图检索 ----
+  if (method === "GET" && urlPath === "/api/relations") {
+    const a = typeof body.a === "string" ? body.a : typeof body.from === "string" ? body.from : "";
+    if (!a) return { status: 400, body: { error: "a（或 from）必填" } };
+    const b = typeof body.b === "string" ? body.b : typeof body.to === "string" ? body.to : null;
+    return {
+      body: {
+        relations: engine.relations(a, b, {
+          asOf: num(body.asOf),
+          maxHops: num(body.maxHops),
+          limit: num(body.limit),
+          namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        }),
+      },
+    };
+  }
+  if (method === "POST" && urlPath === "/api/relations") {
+    const from = typeof body.from === "string" ? body.from : "";
+    const to = typeof body.to === "string" ? body.to : "";
+    const predicate = typeof body.predicate === "string" ? body.predicate : "";
+    if (!from || !to || !predicate) {
+      return { status: 400, body: { error: "from / to / predicate 都必填" } };
+    }
+    const rel = engine.link({
+      from,
+      fromType: parseEntityType(body.fromType),
+      to,
+      toType: parseEntityType(body.toType),
+      predicate,
+      confidence: typeof body.confidence === "number" ? body.confidence : undefined,
+      memoryId: typeof body.memoryId === "string" ? body.memoryId : null,
+      namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+    });
+    return { status: 201, body: rel };
+  }
+  if (method === "GET" && urlPath === "/api/entities") {
+    const ns = typeof body.namespace === "string" ? body.namespace : undefined;
+    const limit = num(body.limit);
+    const memoryId = typeof body.memoryId === "string" ? body.memoryId : undefined;
+    return {
+      body: {
+        entities: memoryId ? engine.entitiesFor(memoryId) : engine.listEntities(ns, limit),
+      },
+    };
   }
 
   // mem0 兼容子集

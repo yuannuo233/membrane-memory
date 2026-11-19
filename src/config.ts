@@ -5,12 +5,19 @@
  */
 import type { ConflictPolicy, MemoryKind, RecallWeights } from "./types.js";
 
-/** 检索四项权重（DESIGN.md 第 4 节默认 0.4/0.3/0.2/0.1） */
+/**
+ * 检索五项权重（DESIGN.md 第 4 节）。
+ *
+ * 这里写的是**相对权重**：实际生效值在 recall 里归一化（缺失的分量归零，
+ * 其余按比例摊到和=1），所以改写默认值不会破坏"分数上界恒为 1.0"的承诺。
+ * 0.4/0.3/0.2/0.1 是 v0.1 的原四项，图检索新增的一项按同比例给 0.1。
+ */
 export const DEFAULT_WEIGHTS: RecallWeights = {
   text: 0.4,
   vec: 0.3,
   time: 0.2,
   conf: 0.1,
+  graph: 0.1,
 };
 
 /** 新鲜度半衰期默认值（天）：偏好最长效，情节片段衰减最快 */

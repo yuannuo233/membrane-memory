@@ -51,7 +51,7 @@ Most memory stores return a list of results with no explanation.
 
 **Every Membrane result carries**:
 - `why` — a human-readable reason, e.g. "full-text rank 1, freshness 92%, confidence 100%"
-- `breakdown` — the four score components (full-text RRF / vector / freshness / confidence),
+- `breakdown` — the five score components (full-text RRF / vector / graph path / freshness / confidence),
   including the weights used
 
 > Good fit for: debugging retrieval quality, explaining results to end users,
@@ -67,15 +67,15 @@ Most memory stores return a list of results with no explanation.
 | **Dependencies** | only `ulid` | many | many | heavy |
 | **Telemetry** | none | PostHog in OSS build | — | — |
 | **Temporal awareness** | ✅ built-in supersede chain + `asOf` | paid platform only | ✅ yes (strongest) | partial |
-| **Graph retrieval** | ❌ none | platform tier | ✅ yes | ✅ yes |
-| **Vector search** | ⚠️ you supply the vectors | ✅ built in | ✅ built in | ✅ built in |
-| **Explainability** | ✅ 4 components + `why` | partial | ✅ evidence chain | partial |
-| **MCP integration** | ✅ 8 tools built in | partial | ✅ | ✅ 47 tools |
+| **Graph retrieval** | ✅ yes (3 tables + 1–3 hops; annotate manually or rely on 6 sentence patterns) | platform tier | ✅ yes | ✅ yes |
+| **Vector search** | ✅ yes (turnkey with an OpenAI-compatible `/embeddings` endpoint; or pass your own vectors) | ✅ built in | ✅ built in | ✅ built in |
+| **Explainability** | ✅ 5 components + `why` | partial | ✅ evidence chain | partial |
+| **MCP integration** | ✅ 10 tools built in | partial | ✅ | ✅ 47 tools |
 
 **Bottom line**:
-- Need **graph retrieval** or **turnkey vector search** → use Hindsight
+- Need **graph-database-grade relational reasoning** or **large-scale vector indexing** → use Hindsight
 - Need **cloud hosting** or **multi-language SDKs** → use mem0
-- Need **a single file, offline, explainable, with queryable history** → use Membrane
+- Need **a single file, offline, explainable, with queryable history — and relational questions** → use Membrane
 
 ---
 
@@ -85,9 +85,9 @@ Most memory stores return a list of results with no explanation.
 
 | Cannot | Detail |
 |---|---|
-| Search synonyms | Stored "Beijing", searching "capital" returns nothing. For semantic search you must compute embeddings yourself and pass `queryVec` |
-| Answer relational questions | "How are Alice and Bob connected" — there is no graph retrieval |
-| Recognize entities | "Beijing" is not tagged as a location. You must set `subject` manually |
+| Search synonyms (unconfigured) | Without an embedding endpoint, stored "Beijing" won't be found by "capital". Set `MEMBRANE_EMBED_MODEL` and you get semantic search |
+| Relational questions in complex sentences | Rules cover 6 patterns (lives in / works or studies at X / A is B's X / A's X is B / likes / dislikes). Annotate `relations` manually for accuracy |
+| Disambiguate entities | "Beijing" is typed as a place by suffix rules, but "Apple" can't be told apart between company and fruit. Type is a hint only |
 | Handle very large scale | Benchmarked only to 100k records; queries that match a large fraction of the corpus are slow (a SQLite FTS5 property) |
 | Tokenize Japanese/Korean | Only Chinese and English have been verified |
 
@@ -134,7 +134,7 @@ Other ways to help:
 
 ## Finally
 
-This is a solo-developed early version (v0.1.7, 133 tests, no real-world users yet).
+This is a solo-developed early version (v0.2.0, 175 tests, no real-world users yet).
 It is not perfect, but every number in the docs is something you can verify yourself —
 `membrane-memory doctor` ships with the package, is deterministic, and produces the same
 result on any machine running the same code.

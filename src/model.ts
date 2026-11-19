@@ -4,7 +4,7 @@
  * 原则：非法输入一律在写入前拦下并给出中文错误信息——宁可报错，不写脏数据。
  * 错误码以 `E_` 前缀，CLI/REST/MCP 层可直接把它映射为退出码/HTTP 状态码。
  */
-import { MEMORY_KINDS, type AddInput, type MemoryKind, type MemoryRecord } from "./types.js";
+import { ENTITY_TYPES, MEMORY_KINDS, type AddInput, type EntityType, type MemoryKind, type MemoryRecord } from "./types.js";
 
 /** 正文长度上限（防呆：SQLite 存 TEXT 没问题，但几十 MB 的"记忆"显然是调用错了） */
 export const MAX_CONTENT_LENGTH = 100_000;
@@ -205,10 +205,72 @@ export function contentKey(content: string): string {
   return content.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-/** 数据库原始行（node:sqlite 返回 unknown 键值） */
-export type Row = Record<string, unknown>;
+/** 实体名长度上限（再长基本不是实体，是整句话了） */
+export const MAX_ENTITY_NAME_LENGTH = 64;
+/** 关系谓词长度上限 */
+export const MAX_PREDICATE_LENGTH = 64;
 
-/** 由数据库行还原领域对象（tags JSON 解析失败时降级为空数组，不让一条脏行炸掉整个库） */
+/**
+ * 校验实体类型：非法值一律按 unknown 处理（图检索是"尽量别丢信息"，
+ * 一个类型写错不该让整条关系写不进去）。
+ */
+export function normalizeEntityType(v: unknown): EntityType {
+  if (typeof v !== "string") return "unknown";
+  const t = v.trim().toLowerCase();
+  return (ENTITY_TYPES as readonly string[]).includes(t) ? (t as EntityType) : "unknown";
+}
+
+/**
+ * 归一化实体名：去首尾空白、压空白；空或超长报错。
+ * 这里**不**做大小写归一——拉丁实体名保留原样显示，比较时统一 lowercase。
+ * @throws ValidationError E_ENTITY
+ */
+export function normalizeEntityName(v: unknown, label = "实体名"): string {
+  if (typeof v !== "string") {
+    throw new ValidationError("E_ENTITY", `${label}必须是字符串，收到：${typeof v}`);
+  }
+  const s = v.replace(/\s+/g, " ").trim();
+  if (s.length === 0) throw new ValidationError("E_ENTITY", `${label}不能为空`);
+  if (s.length > MAX_ENTITY_NAME_LENGTH) {
+    throw new ValidationError("E_ENTITY", `${label}超长（>${MAX_ENTITY_NAME_LENGTH} 字符）：${s.slice(0, 20)}…`);
+  }
+  return s;
+}
+
+/** 归一化关系谓词（如"同学"/"住在"） */
+export function normalizePredicate(v: unknown): string {
+  if (typeof v !== "string") {
+    throw new ValidationError("E_PREDICATE", `关系谓词必须是字符串，收到：${typeof v}`);
+  }
+  const s = v.trim();
+  if (s.length === 0) throw new ValidationError("E_PREDICATE", "关系谓词不能为空");
+  if (s.length > MAX_PREDICATE_LENGTH) {
+    throw new ValidationError("E_PREDICATE", `关系谓词超长（>${MAX_PREDICATE_LENGTH} 字符）`);
+  }
+  return s;
+}
+
+/**
+ * 归一化向量：Float32Array 或 number[]（REST/MCP 传 JSON 数组）→ Float32Array。
+ * 非法（含 NaN/Infinity、空数组）返回 null，由调用方决定是跳过还是报错——
+ * **向量算失败/传错绝不能阻断写入**，这是零依赖底线的延伸。
+ */
+export function normalizeVec(v: unknown): Float32Array | null {
+  if (v instanceof Float32Array) {
+    if (v.length === 0) return null;
+    for (const x of v) if (!Number.isFinite(x)) return null;
+    return v;
+  }
+  if (Array.isArray(v)) {
+    if (v.length === 0) return null;
+    for (const x of v) if (typeof x !== "number" || !Number.isFinite(x)) return null;
+    return new Float32Array(v as number[]);
+  }
+  return null;
+}
+
+/** 数据库原始行（node:sqlite 返回 unknown 键值） */
+export type Row = Record<string, unknown>;/** 由数据库行还原领域对象（tags JSON 解析失败时降级为空数组，不让一条脏行炸掉整个库） */
 export function rowToRecord(row: Row): MemoryRecord {
   let tags: string[] = [];
   const rawTags = row["tags"];

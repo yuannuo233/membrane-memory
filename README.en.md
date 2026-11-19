@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.1.9-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
@@ -23,13 +23,10 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 > Give your agent a memory that never forgets — and tells you **why** it recalled each item.
 > Works out of the box: no network, no model download, no API key, no native dependencies.
 
-> 🔴 **Honest disclosure (read this first)**: This is an early v0.1 project — solo-developed, 133 tests (verified live by CI), **no real-world users yet**.
+> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 175 tests (verified live by CI), **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
 > We do **not** chase "number one on benchmarks" — that is exactly how comparable projects fell from grace.
 
-> 📖 **Not sure if this fits?** Read [Why Membrane](why-membrane.md) — one page covering the
-> suitable scenarios, an honest comparison with mem0 / Hindsight / MemPalace, and what we
-> explicitly cannot do.
 
 ---
 
@@ -41,9 +38,9 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Missing | Impact | Note |
 |---|---|---|
-| **No graph retrieval** | Can't answer "how are Alice and Bob related" style structural links | Currently full-text + time only. Biggest gap, planned for v0.2 |
-| **No vector search out of the box** | Default is full-text only (CJK bigram; synonyms won't match) | The `queryVec` API exists, but you must compute embeddings yourself and pass them in |
-| **No entity extraction** | Won't auto-detect that "Beijing" is a place or "Alice" is a person | You must put entities in `subject` manually |
+| **Graph retrieval relies on rules, so coverage is narrow** | Only 6 Chinese sentence patterns (lives in / works or studies at X / A is B's X / A's X is B / likes / dislikes) | Complex sentences yield nothing. Annotate `relations` manually for accuracy; rules are a best-effort fallback |
+| **Vector search needs your own embedding endpoint** | Without one it falls back to full-text (CJK bigram; synonyms won't match) | Any OpenAI-compatible `/embeddings` works (`MEMBRANE_LLM_BASE_URL` + `MEMBRANE_EMBED_MODEL`); you can also pass `vec` / `queryVec` computed elsewhere |
+| **Entity typing is heuristic, not model-based** | "Beijing" is typed as a place via suffix rules, but "Apple" can't be disambiguated between company and fruit | Type is only a hint — a wrong guess never hurts recall, only how you read `why` |
 | **Multilingual quality not guaranteed** | Chinese (bigram) + English (word) work; Japanese/Korean/others untested | Only Chinese & English have been verified |
 | **No hosted cloud** | Self-run and self-backup only | Deliberate (local-first), but you must migrate the DB manually across machines |
 
@@ -51,12 +48,12 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Item | Current state | Risk |
 |---|---|---|
-| **No real-world users yet** | All 133 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
+| **No real-world users yet** | All 175 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
 | **Cross-process concurrency = WAL only** | SQLite single-writer; concurrent writers queue | Fine for personal use; a bottleneck under load |
 | **Performance tested only to 1,000 records** | Writes/queries in seconds at 1k | 100k+ not stress-tested |
 | **Doctor sample is tiny** | 5 recall cases / 8 update pairs | **Regression self-check, not a benchmark** — not a basis for cross-project comparison |
 | **Solo maintainer** | No team, no SLA | Issues may take days |
-| **Weights/half-lives are guesses** | 0.4/0.3/0.2/0.1 and 90/14/365/60 days are untuned | You may need to tune for your workload |
+| **Weights/half-lives are guesses** | 0.4/0.3/0.2/0.1/0.1 and 90/14/365/60 days are untuned | You may need to tune for your workload |
 
 ### Explicit non-goals
 
@@ -64,8 +61,8 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 - ❌ No built-in LLM (extraction/embedding are yours to configure — we won't burn your budget)
 - ❌ No benchmark chasing (we only promise reproducible doctor numbers)
 
-> If you need graph retrieval, turnkey vector search, or a stress-tested large-scale solution —
-> a mature alternative project is the better fit. We won't pretend otherwise.
+> If you need turnkey high-quality graph retrieval, a mature vector index (HNSW/faiss), or a
+> stress-tested large-scale solution — a mature alternative project is the better fit. We won't pretend otherwise.
 
 ---
 
@@ -77,7 +74,7 @@ There are already mature projects in the agent-memory space. Membrane picks a di
 |---|---|
 | Requires cloud embedding / LLM to work at all | **Zero telemetry, zero native deps**: Node's built-in `node:sqlite`, one local file |
 | Stale retrieval — ask "where does the user live now?" and get an old address (see StaleBench) | **Temporal as a first-class citizen**: every memory has `valid_from`/`valid_to`/`superseded_by`; `asOf(t)` historical queries |
-| Recall is a black box — "why did you give me this?" | **Explainable recall**: every hit returns `why` + a 4-component score breakdown |
+| Recall is a black box — "why did you give me this?" | **Explainable recall**: every hit returns `why` + a 5-component score breakdown (text RRF / vector / graph path / freshness / confidence) |
 | Integration means rewriting code per vendor SDK | **MCP built in**: one server plugs into WorkBuddy / zcode / Claude / Cursor / Google Antigravity / AstrBot and more |
 | Performance numbers you can't reproduce yourself | **Ship doctor with the package**: every number in this README comes from the `doctor` command — clone the repo and reproduce it yourself |
 
@@ -89,7 +86,6 @@ There are already mature projects in the agent-memory space. Membrane picks a di
 
 Requires **Node ≥ 24**. Reason: the built-in `node:sqlite` is experimental in 22.x and 23.x and needs `--experimental-sqlite`; it is enabled by default from Node 24 onward. Setting the floor at 24 means no flags to remember.
 
-```bash
 > ⚠️ **Not published to npm yet.** `npm install -g membrane-memory` currently returns 404.
 > Use one of the two methods below; this section will be updated once it is on npm.
 
@@ -99,7 +95,7 @@ Requires **Node ≥ 24**. Reason: the built-in `node:sqlite` is experimental in 
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # dev dependencies only (typescript/vitest/tsx); the only runtime dep is ulid
-npm test           # all pass (133 cases at the moment)
+npm test           # all pass (175 cases at the moment)
 npm run build
 node dist/cli.js doctor    # should report all checks passed
 ```
@@ -111,7 +107,7 @@ Then use `node dist/cli.js <command>`, or `npm link` to get a global `membrane-m
 Grab `membrane-memory-x.y.z.tgz` from [Releases](https://github.com/yuannuo233/membrane-memory/releases), then:
 
 ```bash
-npm install -g ./membrane-memory-0.1.9.tgz
+npm install -g ./membrane-memory-0.2.0.tgz
 membrane-memory doctor
 ```
 
@@ -179,6 +175,45 @@ m.history(id);                                               // full add/superse
 - `pin` exempts a memory from auto-supersede
 - Soft delete (forget) keeps a tombstone; historical queries still see it
 
+### Graph retrieval: answer "how are Alice and Bob related"
+
+```js
+// Manual annotation (most accurate): attach relations while writing the memory
+m.add({
+  content: "Alice is Bob's classmate",
+  subject: "Alice",
+  relations: [{ to: "Bob", predicate: "classmate", toType: "person" }],
+});
+
+// Rule extraction (optional): 6 high-confidence sentence patterns, nothing forced
+m.add({ content: "用户住在北京", subject: "用户" });   // → 用户 --住在--> 北京
+
+m.relations("Alice", "Bob");            // → Alice 与 Bob：classmate
+m.relations("张三和李四是什么关系");      // a whole sentence works too (entities auto-detected)
+m.relations("Alice", "Acme", { maxHops: 2 }); // two hops: Alice → Bob → Acme
+```
+
+Relations are **temporal too**: superseding or forgetting a memory closes the relations it derived,
+while `asOf(t)` still returns them. The graph path also joins the unified score as a **fifth candidate
+source**, so memories with zero lexical overlap but a matching relation can still be recalled —
+`why` spells out the path (`关系第 1 名（甲 --谓词--> 乙）`).
+
+### Vector search: bring your own embedding endpoint
+
+```bash
+# Any OpenAI-compatible /embeddings endpoint (skip it and you get pure full-text, identical to v0.1)
+set MEMBRANE_LLM_BASE_URL=https://api.openai.com/v1
+set MEMBRANE_LLM_API_KEY=sk-...
+set MEMBRANE_EMBED_MODEL=text-embedding-3-small
+
+membrane-memory add "User lives in Beijing" --subject user   # embeddings computed automatically
+membrane-memory search "where does he live"                  # query vector fused with full-text
+membrane-memory embed-backfill                               # one-off backfill for older DBs (batched)
+```
+
+Fully offline is also fine: pass precomputed vectors via `add({ vec })` and `recall({ queryVec })`.
+**A failed embedding never blocks a write** — the memory is stored, simply without a vector.
+
 ### Token economy: don't write-then-query every turn
 
 Memory ops are **tool calls**, and every call costs tokens. Batch, and query only when needed.
@@ -217,18 +252,21 @@ Memory policy:
 
 ### Explainable recall
 
-FTS5 (CJK bigram tokenizer) + optional vectors, RRF-fused. Each hit returns:
+FTS5 (CJK bigram tokenizer) + optional vectors + optional graph paths, RRF-fused. Each hit returns:
 
-- `why`: human-readable reason
-- `breakdown`: `rrfText` / `freshness` / `confidence` / `ageDays` / `halfLifeDays` / `weights`
+- `why`: human-readable reason (including graph explanations like `关系第 1 名（甲 --谓词--> 乙）`)
+- `breakdown`: `rrfText` / `rrfVec` / `vecSim` / `rrfGraph` / `graphPaths` / `freshness` / `confidence` / `ageDays` / `halfLifeDays` / `weights`
+
+The five weights are **relative**: a missing source is zeroed and the rest are rescaled to sum to 1,
+so the score bound stays at 1.0.
 
 ### Interfaces
 
 | Interface | Command | Notes |
 |---|---|---|
 | SDK | `import { Membrane }` | ESM + full TypeScript types |
-| CLI | `add / search / list / stats / mcp / serve / doctor` | complete |
-| MCP | `membrane-memory mcp` | stdio, 8 tools |
+| CLI | `add / search / relations / link / entities / embed-backfill / list / stats / mcp / serve / doctor` | complete |
+| MCP | `membrane-memory mcp` | stdio, 10 tools |
 | REST | `membrane-memory serve` | mem0-compatible subset (`/v1/memories`) + web console, binds 127.0.0.1 |
 
 ---
@@ -238,14 +276,20 @@ FTS5 (CJK bigram tokenizer) + optional vectors, RRF-fused. Each hit returns:
 Every number here comes from `membrane-memory doctor` — **same result on any machine** (fixed clock + in-memory DB).
 
 ```
-Doctor Report v0.1.0
+Doctor Report v0.2.0
 Scenario 1 · Write & recall    hit rate 100%  (5/5)
 Scenario 2 · Stale update      current@1 88%  (7/8)
                                contamination@5 0%
 Scenario 3 · Cross-session     recalled after restart ✓
+Scenario 4 · Vector search     vector-only hit ✓  cosine 1.00  vec component applied
+Scenario 5 · Graph retrieval   answered "张三 与 李四：同学" ✓
+                               2 edges within 2 hops, graph path applied
 
 Overall: all passed ✓
 ```
+
+Scenarios 4/5 are **fully offline**: vectors are hand-built unit vectors and relations are manually
+annotated, so the numbers are identical on any machine and a dead network never turns CI red.
 
 **Metric definitions** (to avoid comparison mistakes):
 - "Write & recall" is **retrieval hit rate**, not end-to-end QA accuracy.
@@ -268,7 +312,6 @@ Running the command writes a full report (JSON + text) locally; reproduce the nu
 
 - [DESIGN.md](DESIGN.md) — living spec: architecture, data model, algorithms, progress (source of truth)
 - [CHANGELOG.md](CHANGELOG.md) — **what changed in each version** (why it was a bug, how it was fixed, which files were touched)
-- [why-membrane.md](why-membrane.md) — **is this the right fit?** (honest comparison with mem0 / Hindsight / MemPalace, plus what we cannot do)
 - [适配配置/](适配配置/) — integration templates
 
 Stack: TypeScript / Node `node:sqlite` / zero runtime deps (except `ulid`).

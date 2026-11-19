@@ -18,10 +18,18 @@ import { dirname } from "node:path";
 import { rowToRecord, toRecords, type Row } from "./model.js";
 import { MembraneError } from "./model.js";
 import { buildFtsQuery, fuzzyUnits, tokenize, tokenizeQuery } from "./tokenize.js";
-import type { HistoryEntry, MemoryKind, MemoryRecord, MembraneStats } from "./types.js";
+import type {
+  EntityType,
+  GraphEntity,
+  HistoryEntry,
+  MemoryKind,
+  MemoryRecord,
+  MembraneStats,
+  Relation,
+} from "./types.js";
 
-/** 当前 schema 版本：表结构变更时递增并写迁移逻辑 */
-const SCHEMA_VERSION = 1;
+/** 当前 schema 版本：表结构变更时递增并写迁移逻辑。v2 新增图检索三表（纯加法） */
+const SCHEMA_VERSION = 2;
 
 /**
  * "现行有效"的 SQL 条件（未软删除且未被取代）。
@@ -54,6 +62,50 @@ export interface FtsSearchOptions {
 
 /** list 的状态过滤 */
 export type ListValidity = "current" | "all";
+
+/** 分批扫向量的过滤条件（图/向量检索共用同一套时点语义） */
+export interface VectorScanOptions {
+  namespace: string;
+  /** 历史时点：只扫该时刻有效的记忆 */
+  asOf?: number;
+  kind?: MemoryKind;
+  kinds?: MemoryKind[];
+  subject?: string | null;
+  /** 每批读多少条（默认 512）。内存占用 ≈ batchSize × 维度 × 4 字节 */
+  batchSize?: number;
+}
+
+/** BLOB → Float32Array（复制到独立 ArrayBuffer，避免共享 buffer 被后续读取污染） */
+function blobToVec(raw: Uint8Array): Float32Array {
+  const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+  return new Float32Array(ab);
+}
+
+/** 实体行 → 领域对象 */
+function rowToEntity(row: Row): GraphEntity {
+  return {
+    id: String(row["id"]),
+    name: String(row["name"]),
+    type: (row["type"] == null ? "unknown" : String(row["type"])) as EntityType,
+    namespace: row["namespace"] == null ? "default" : String(row["namespace"]),
+    createdAt: Number(row["created_at"]),
+  };
+}
+
+/** 关系行 → 领域对象 */
+function rowToRelation(row: Row): Relation {
+  return {
+    id: String(row["id"]),
+    fromId: String(row["from_id"]),
+    toId: String(row["to_id"]),
+    predicate: String(row["predicate"]),
+    memoryId: row["memory_id"] == null ? null : String(row["memory_id"]),
+    confidence: Number(row["confidence"]),
+    validFrom: Number(row["valid_from"]),
+    validTo: row["valid_to"] == null ? null : Number(row["valid_to"]),
+    namespace: row["namespace"] == null ? "default" : String(row["namespace"]),
+  };
+}
 
 export interface ListOptions {
   validity?: ListValidity;
@@ -197,6 +249,38 @@ export class Storage {
         PRIMARY KEY (unit, memory_id)
       );
       CREATE INDEX IF NOT EXISTS idx_char_index_memory ON char_index(memory_id);
+      -- 图检索：实体节点。名字唯一（同命名空间内），type 是属性而非身份——
+      -- "苹果"是公司还是水果交给上层，不给同一个名字造两个节点。
+      CREATE TABLE IF NOT EXISTS entities (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        type       TEXT NOT NULL DEFAULT 'unknown',
+        namespace  TEXT NOT NULL DEFAULT 'default',
+        created_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_name ON entities(namespace, name);
+      -- 图检索：有向关系边。valid_from / valid_to 与记忆同一套时间感知语义。
+      CREATE TABLE IF NOT EXISTS relations (
+        id          TEXT PRIMARY KEY,
+        from_id     TEXT NOT NULL,
+        to_id       TEXT NOT NULL,
+        predicate   TEXT NOT NULL,
+        memory_id   TEXT,
+        confidence  REAL NOT NULL DEFAULT 1,
+        valid_from  INTEGER NOT NULL,
+        valid_to    INTEGER,
+        namespace   TEXT NOT NULL DEFAULT 'default'
+      );
+      CREATE INDEX IF NOT EXISTS idx_relations_from ON relations(namespace, from_id, valid_to);
+      CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(namespace, to_id, valid_to);
+      CREATE INDEX IF NOT EXISTS idx_relations_memory ON relations(memory_id);
+      -- 图检索：记忆 ↔ 实体多对多（一条记忆提到哪些实体）
+      CREATE TABLE IF NOT EXISTS memory_entities (
+        memory_id TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        PRIMARY KEY (memory_id, entity_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_entities_entity ON memory_entities(entity_id);
     `);
     // 向后兼容迁移：老库没有 namespace 列时补上（ALTER TABLE 加列，幂等）。
     // 注意顺序：必须先加列，再建依赖该列的索引——否则老库升级会报 no such column。
@@ -208,7 +292,11 @@ export class Storage {
     const ver = this.getSetting("schema_version");
     if (ver === null) {
       this.setSetting("schema_version", String(SCHEMA_VERSION));
-    } else if (Number(ver) !== SCHEMA_VERSION) {
+    } else if (Number(ver) < SCHEMA_VERSION) {
+      // 加法式迁移：新表/新列都在上面的 DDL 里 IF NOT EXISTS 建好了，
+      // 只需把版本号推上去。老库（v1）升级不会丢数据，也不会报错。
+      this.setSetting("schema_version", String(SCHEMA_VERSION));
+    } else if (Number(ver) > SCHEMA_VERSION) {
       // 报错前先关库：Windows 下文件句柄不释放会让后续清理/换库全部失败
       this.close();
       throw new MembraneError(
@@ -503,28 +591,270 @@ export class Storage {
     const row = this.stmt(`SELECT dim, vec FROM embeddings WHERE id = ?`).get(id) as
       | { dim: number; vec: Uint8Array }
       | undefined;
-    if (!row) return null;
-    const ab = row.vec.buffer.slice(row.vec.byteOffset, row.vec.byteOffset + row.vec.byteLength);
-    return new Float32Array(ab);
+    return row ? blobToVec(row.vec) : null;
   }
 
-  /** 全量向量（向量检索是本地线性扫，规模千级无压力；更大的库留到 v0.2 接 sqlite-vec） */
+  /** 全量向量（保留给 SDK/测试；引擎内部一律走 scanEmbeddings 分批，不再用这个） */
   getAllEmbeddings(): Map<string, Float32Array> {
     const rows = this.stmt(`SELECT id, vec FROM embeddings`).all() as {
       id: string;
       vec: Uint8Array;
     }[];
     const map = new Map<string, Float32Array>();
-    for (const row of rows) {
-      const ab = row.vec.buffer.slice(row.vec.byteOffset, row.vec.byteOffset + row.vec.byteLength);
-      map.set(row.id, new Float32Array(ab));
-    }
+    for (const row of rows) map.set(row.id, blobToVec(row.vec));
     return map;
   }
 
   /** 删除记忆时同步清理向量缓存 */
   deleteEmbedding(id: string): void {
     this.stmt(`DELETE FROM embeddings WHERE id = ?`).run(id);
+  }
+
+  /**
+   * 库内已有向量的维度分布（维度 → 条数）。
+   * 用途：防止混用两套 embedding 模型——维度不同的向量余弦恒为 0，
+   * 混进来会静默地"永远召不中"，必须在写入时就拦下并说明。
+   */
+  embeddingDims(): Map<number, number> {
+    const rows = this.stmt(`SELECT dim, COUNT(*) AS n FROM embeddings GROUP BY dim`).all() as {
+      dim: number;
+      n: number;
+    }[];
+    return new Map(rows.map((r) => [Number(r.dim), Number(r.n)]));
+  }
+
+  /** 按 id 批量取向量（候选重排用；比 getAllEmbeddings 全表扫省得多） */
+  getEmbeddingsByIds(ids: string[]): Map<string, Float32Array> {
+    const out = new Map<string, Float32Array>();
+    if (ids.length === 0) return out;
+    // SQLite 变量上限 999（老版本 127），按 400 一批切分，宁多跑几次也不炸
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const rows = this.stmt(
+        `SELECT id, vec FROM embeddings WHERE id IN (${chunk.map(() => "?").join(",")})`,
+      ).all(...chunk) as { id: string; vec: Uint8Array }[];
+      for (const row of rows) out.set(String(row.id), blobToVec(row.vec));
+    }
+    return out;
+  }
+
+  /** 缺向量的现行记忆（回填用；只回填仍有效的，历史版本不必花 API 钱） */
+  memoriesMissingEmbedding(namespace = "default", limit = -1): MemoryRecord[] {
+    const sql = `SELECT m.* FROM memories m
+                 LEFT JOIN embeddings e ON e.id = m.id
+                 WHERE m.namespace = ? AND ${CURRENT_SQL("m")} AND e.id IS NULL
+                 ORDER BY m.valid_from ASC, m.id ASC
+                 ${limit > 0 ? "LIMIT ?" : ""}`;
+    const rows =
+      limit > 0 ? this.stmt(sql).all(namespace, limit) : this.stmt(sql).all(namespace);
+    return toRecords(rows as unknown[]);
+  }
+
+  /**
+   * 分批扫描向量（向量检索的**内存可控**实现）。
+   *
+   * 为什么不是 getAllEmbeddings：1000 条 × 1536 维 float32 ≈ 6MB 还行，
+   * 10 万条就是 600MB，直接把进程拖死。这里用 keyset 分页（e.rowid > 上一批最大值）
+   * 每次只物化 batchSize 条，调用方边扫边维护 top-K，内存只跟 batchSize 有关。
+   *
+   * 过滤（命名空间/现行/kind/subject/时点）全部下推到 SQL，避免把别租户的向量读出来。
+   * e.rowid 是稳定递增的，keyset 分页不会漏行也不会重复（不像 OFFSET 会被并发写打乱）。
+   */
+  scanEmbeddings(
+    options: VectorScanOptions,
+    onBatch: (items: { record: MemoryRecord; vec: Float32Array }[]) => void,
+  ): void {
+    const batch = options.batchSize && options.batchSize > 0 ? options.batchSize : 512;
+    const where: string[] = ["e.rowid > ?", "m.namespace = ?"];
+    const base: (string | number | null)[] = [0, options.namespace];
+    if (options.asOf === undefined) {
+      where.push(CURRENT_SQL("m"));
+    } else {
+      where.push("m.valid_from <= ?", "(m.valid_to IS NULL OR m.valid_to > ?)", "m.deleted = 0");
+      base.push(options.asOf, options.asOf);
+    }
+    if (options.kind) {
+      where.push("m.kind = ?");
+      base.push(options.kind);
+    } else if (options.kinds && options.kinds.length > 0) {
+      where.push(`m.kind IN (${options.kinds.map(() => "?").join(",")})`);
+      base.push(...options.kinds);
+    }
+    if (options.subject !== undefined) {
+      if (options.subject === null) where.push("m.subject IS NULL");
+      else {
+        where.push("m.subject = ?");
+        base.push(options.subject);
+      }
+    }
+    const sql = `SELECT m.*, e.vec AS _vec, e.rowid AS _erowid
+                 FROM embeddings e JOIN memories m ON m.id = e.id
+                 WHERE ${where.join(" AND ")}
+                 ORDER BY e.rowid ASC
+                 LIMIT ?`;
+    let last = 0;
+    while (true) {
+      const rows = this.stmt(sql).all(last, ...base.slice(1), batch) as Row[];
+      if (rows.length === 0) return;
+      const items: { record: MemoryRecord; vec: Float32Array }[] = [];
+      for (const row of rows) {
+        const raw = row["_vec"];
+        if (!(raw instanceof Uint8Array)) continue;
+        items.push({ record: rowToRecord(row), vec: blobToVec(raw) });
+      }
+      last = Number(rows[rows.length - 1]!["_erowid"]);
+      onBatch(items);
+      if (rows.length < batch) return;
+    }
+  }
+
+  // ---------- entities / relations（图检索） ----------
+
+  /** 按名字取实体（同命名空间内名字唯一） */
+  getEntityByName(name: string, namespace = "default"): GraphEntity | null {
+    const row = this.stmt(
+      `SELECT id, name, type, namespace, created_at FROM entities
+       WHERE namespace = ? AND name = ?`,
+    ).get(namespace, name) as Row | undefined;
+    return row ? rowToEntity(row) : null;
+  }
+
+  /** 插入实体（id 由引擎生成，保证与记忆 id 同一套单调 ULID） */
+  insertEntity(entity: GraphEntity): void {
+    this.stmt(
+      `INSERT INTO entities (id, name, type, namespace, created_at) VALUES (?, ?, ?, ?, ?)`,
+    ).run(entity.id, entity.name, entity.type, entity.namespace, entity.createdAt);
+  }
+
+  /** 修正实体类型（unknown → 具体类型） */
+  updateEntityType(id: string, type: EntityType): void {
+    this.stmt(`UPDATE entities SET type = ? WHERE id = ?`).run(type, id);
+  }
+
+  /** 命名空间内全部实体（查询侧按名字找实体用；实体数量远小于记忆，可接受） */
+  listEntities(namespace = "default", limit = 5000): GraphEntity[] {
+    const rows = this.stmt(
+      `SELECT id, name, type, namespace, created_at FROM entities
+       WHERE namespace = ? ORDER BY name ASC LIMIT ?`,
+    ).all(namespace, limit) as Row[];
+    return rows.map(rowToEntity);
+  }
+
+  /** 记一条"这条记忆提到这个实体" */
+  linkMemoryEntity(memoryId: string, entityId: string): void {
+    this.stmt(`INSERT OR IGNORE INTO memory_entities (memory_id, entity_id) VALUES (?, ?)`).run(
+      memoryId,
+      entityId,
+    );
+  }
+
+  /** 写一条关系边 */
+  insertRelation(rel: Relation): void {
+    this.stmt(
+      `INSERT INTO relations
+         (id, from_id, to_id, predicate, memory_id, confidence, valid_from, valid_to, namespace)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      rel.id,
+      rel.fromId,
+      rel.toId,
+      rel.predicate,
+      rel.memoryId,
+      rel.confidence,
+      rel.validFrom,
+      rel.validTo,
+      rel.namespace,
+    );
+  }
+
+  /**
+   * 取关系。`ids` 给出时只返回**任一端**落在这些实体上的边（一跳邻居）。
+   * 时点语义与记忆一致：缺省只看现行（valid_to IS NULL），给 asOf 则按区间判断。
+   */
+  relationsTouching(
+    ids: string[],
+    options: { namespace?: string; asOf?: number; limit?: number } = {},
+  ): Relation[] {
+    if (ids.length === 0) return [];
+    const ns = options.namespace ?? "default";
+    const where: string[] = ["namespace = ?"];
+    const params: (string | number)[] = [ns];
+    if (options.asOf === undefined) where.push("valid_to IS NULL");
+    else {
+      where.push("valid_from <= ?", "(valid_to IS NULL OR valid_to > ?)");
+      params.push(options.asOf, options.asOf);
+    }
+    const placeholders = ids.map(() => "?").join(",");
+    const limit = options.limit && options.limit > 0 ? options.limit : 1000;
+    const rows = this.stmt(
+      `SELECT id, from_id, to_id, predicate, memory_id, confidence, valid_from, valid_to, namespace
+         FROM relations
+        WHERE ${where.join(" AND ")}
+          AND (from_id IN (${placeholders}) OR to_id IN (${placeholders}))
+        ORDER BY confidence DESC, valid_from DESC
+        LIMIT ?`,
+    ).all(...params, ...ids, ...ids, limit) as Row[];
+    return rows.map(rowToRelation);
+  }
+
+  /** 按记忆批量取关系（recall 展示图路证据用，避免 N+1） */
+  relationsForMemoryIds(ids: string[], asOf?: number): Map<string, Relation[]> {
+    const out = new Map<string, Relation[]>();
+    if (ids.length === 0) return out;
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const where: string[] = [`memory_id IN (${chunk.map(() => "?").join(",")})`];
+      const params: (string | number)[] = [...chunk];
+      if (asOf === undefined) where.push("valid_to IS NULL");
+      else {
+        where.push("valid_from <= ?", "(valid_to IS NULL OR valid_to > ?)");
+        params.push(asOf, asOf);
+      }
+      const rows = this.stmt(
+        `SELECT id, from_id, to_id, predicate, memory_id, confidence, valid_from, valid_to, namespace
+           FROM relations WHERE ${where.join(" AND ")}`,
+      ).all(...params) as Row[];
+      for (const row of rows) {
+        const rel = rowToRelation(row);
+        const key = rel.memoryId ?? "";
+        const list = out.get(key);
+        if (list) list.push(rel);
+        else out.set(key, [rel]);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 关闭某条记忆派生的全部关系（记忆被取代/遗忘时调用）。
+   * 不删行：asOf 历史查询仍要能查到"当时那条关系成立"。
+   */
+  closeRelationsForMemory(memoryId: string, at: number): void {
+    this.stmt(
+      `UPDATE relations SET valid_to = ? WHERE memory_id = ? AND valid_to IS NULL`,
+    ).run(at, memoryId);
+  }
+
+  /** 记忆 → 实体 id 列表（答"这条记忆涉及谁"用） */
+  entitiesForMemory(memoryId: string): GraphEntity[] {
+    const rows = this.stmt(
+      `SELECT e.id, e.name, e.type, e.namespace, e.created_at
+         FROM memory_entities me JOIN entities e ON e.id = me.entity_id
+        WHERE me.memory_id = ? ORDER BY e.name ASC`,
+    ).all(memoryId) as Row[];
+    return rows.map(rowToEntity);
+  }
+
+  /** 图路候选：命中了关系、且关系指向这些记忆 → 返回记忆 id 及命中边数 */
+  memoryIdsForRelations(relations: Relation[]): { id: string; hits: number }[] {
+    const counts = new Map<string, number>();
+    for (const r of relations) {
+      if (!r.memoryId) continue;
+      counts.set(r.memoryId, (counts.get(r.memoryId) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([id, hits]) => ({ id, hits }))
+      .sort((a, b) => b.hits - a.hits);
   }
 
   // ---------- history（审计） ----------
