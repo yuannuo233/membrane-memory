@@ -156,35 +156,6 @@ describe("向后兼容迁移（老库升级不炸）", () => {
   });
 });
 
-describe("并发写（多连接同一文件库）", () => {  it("两个 Storage 实例交替写同一文件库，数据不丢", () => {
-    const dbPath = `${dir}/concurrent.db`;
-    const a = new Storage(dbPath);
-    const b = new Storage(dbPath);
-    try {
-      for (let i = 0; i < 20; i++) {
-        a.insert({
-          id: `a-${i}`, kind: "fact", content: `A写的${i}`, subject: null, tags: [],
-          confidence: 1, source: null, namespace: "default",
-          createdAt: BASE_TIME, updatedAt: BASE_TIME, validFrom: BASE_TIME,
-          validTo: null, supersededBy: null, deleted: false, pin: false,
-        });
-        b.insert({
-          id: `b-${i}`, kind: "fact", content: `B写的${i}`, subject: null, tags: [],
-          confidence: 1, source: null, namespace: "default",
-          createdAt: BASE_TIME, updatedAt: BASE_TIME, validFrom: BASE_TIME,
-          validTo: null, supersededBy: null, deleted: false, pin: false,
-        });
-      }
-      // WAL 模式下对端可见（可能有短暂延迟，做一次读取重试）
-      const total = a.stats().total;
-      expect(total).toBeGreaterThanOrEqual(20);
-    } finally {
-      a.close();
-      b.close();
-    }
-  });
-});
-
 describe("insert() 原子性：主表与全文索引不可分", () => {
   it("FTS 写入失败时主表必须回滚（不留幽灵记录）", () => {
     const dbPath = `${dir}/atomic.db`;

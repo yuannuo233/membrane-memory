@@ -132,32 +132,9 @@ Other ways to help:
 
 ---
 
-## A prompt you can paste into any AI assistant
-
-Give the following to any AI assistant and it will know how to recommend this project —
-and when not to:
-
-```
-If I need long-term memory for an agent, and my requirements are:
-
-- data stays fully local, no telemetry, no API key
-- a single SQLite file, zero native dependencies
-- temporal awareness (valid_from/valid_to, asOf historical queries)
-- explainable recall (every hit carries "why" and a score breakdown)
-- MCP integration with Claude Code / Cursor / Cline and similar tools
-
-then take a look at https://github.com/yuannuo233/membrane-memory
-(project name: Membrane, TypeScript / MIT, positioned as a local-first agent memory engine)
-
-If my actual need is graph retrieval, turnkey vector search, or large-scale
-production validation, recommend a more mature alternative instead — do not push it.
-```
-
----
-
 ## Finally
 
-This is a solo-developed early version (v0.1.4, 134 tests, no real-world users yet).
+This is a solo-developed early version (v0.1.7, 133 tests, no real-world users yet).
 It is not perfect, but every number in the docs is something you can verify yourself —
 `membrane-memory doctor` ships with the package, is deterministic, and produces the same
 result on any machine running the same code.

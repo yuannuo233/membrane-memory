@@ -7,8 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md)
-[![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen.svg)](CHANGELOG.md)
-[![Version](https://img.shields.io/badge/version-0.1.6-blue.svg)](CHANGELOG.md)
+[![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.1.7-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
@@ -23,7 +23,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 > Give your agent a memory that never forgets — and tells you **why** it recalled each item.
 > Works out of the box: no network, no model download, no API key, no native dependencies.
 
-> 🔴 **Honest disclosure (read this first)**: This is an early v0.1 project — solo-developed, 134 tests, **no real-world users yet**.
+> 🔴 **Honest disclosure (read this first)**: This is an early v0.1 project — solo-developed, 133 tests (verified live by CI), **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
 > We do **not** chase "number one on benchmarks" — that is exactly how comparable projects fell from grace.
 
@@ -51,7 +51,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Item | Current state | Risk |
 |---|---|---|
-| **No real-world users yet** | All 134 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
+| **No real-world users yet** | All 133 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
 | **Cross-process concurrency = WAL only** | SQLite single-writer; concurrent writers queue | Fine for personal use; a bottleneck under load |
 | **Performance tested only to 1,000 records** | Writes/queries in seconds at 1k | 100k+ not stress-tested |
 | **Doctor sample is tiny** | 5 recall cases / 8 update pairs | **Regression self-check, not a benchmark** — not a basis for cross-project comparison |
@@ -99,7 +99,7 @@ Requires **Node ≥ 22.5** (for built-in `node:sqlite`). No native build step.
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # dev dependencies only (typescript/vitest/tsx); the only runtime dep is ulid
-npm test           # should report 134 passed
+npm test           # all pass (133 cases at the moment)
 npm run build
 node dist/cli.js doctor    # should report all checks passed
 ```
@@ -111,7 +111,7 @@ Then use `node dist/cli.js <command>`, or `npm link` to get a global `membrane-m
 Grab `membrane-memory-x.y.z.tgz` from [Releases](https://github.com/yuannuo233/membrane-memory/releases), then:
 
 ```bash
-npm install -g ./membrane-memory-0.1.6.tgz
+npm install -g ./membrane-memory-0.1.7.tgz
 membrane-memory doctor
 ```
 

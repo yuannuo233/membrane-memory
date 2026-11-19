@@ -149,7 +149,7 @@ export function runDoctor(dbPath?: string): DoctorReport {
     { name: "跨会话持久性：重启后能召回", pass: crossSession.recalled, detail: crossSession.recalled ? "recalled" : "lost" },
   ];
   return {
-    version: "0.1.6",
+    version: "0.1.7",
     generatedAt: new Date(T0).toISOString(),
     deterministic: true,
     scenarios: { writeRecall, staleUpdate, crossSession },

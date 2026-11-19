@@ -7,8 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md#10-依赖白名单新增依赖需在此登记)
-[![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen.svg)](CHANGELOG.md)
-[![Version](https://img.shields.io/badge/version-0.1.6-blue.svg)](CHANGELOG.md)
+[![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.1.7-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **时间感知、本地优先、可解释的 Agent 记忆引擎。**
@@ -23,7 +23,7 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 > 一句话：给 AI Agent 一个**过目不忘、还会告诉你"为什么想起这条"**的记忆脑。
 > 装上就能用——不联网、不下模型、不要 API key、零原生依赖。
 
-> 🔴 **诚实声明（请先读）**：这是 v0.1 早期项目，单人开发、134 个测试、**尚无真实用户验证**。
+> 🔴 **诚实声明（请先读）**：这是 v0.1 早期项目，单人开发、133 个测试（CI 实时验证）、**尚无真实用户验证**。
 > 下方「[已知局限](#已知局限别踩坑)」把我们所有短板逐条写明了，建议先看完再决定用不用。
 > 我们不做"benchmark 刷到第一"的宣传——更看重数字能被你自己复现。
 
@@ -50,7 +50,7 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 
 | 项目 | 现状 | 风险 |
 |---|---|---|
-| **没有真实用户验证** | 134 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
+| **没有真实用户验证** | 133 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
 | **跨进程并发只有 WAL 兜底** | SQLite 单写者模型，多进程同时写会排队 | 个人用没问题；高并发场景会成瓶颈 |
 | **性能只测到 1000 条** | 1000 条写入/查询在秒级 | 10 万条以上未压测，可能变慢 |
 | **doctor 样本很小** | 召回 5 条 / 更新 8 组 | **是回归自检，不是 benchmark**，不能作为跨项目横向比较的依据 |
@@ -97,7 +97,7 @@ Agent 记忆领域已有不少成熟项目。Membrane 选择了一个不同的�
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # 只装开发依赖（typescript/vitest/tsx），运行时依赖只有 ulid
-npm test           # 应该看到 134 passed
+npm test           # 全部通过（当前 133 个用例）
 npm run build
 node dist/cli.js doctor    # 应该全部通过
 ```
@@ -110,7 +110,7 @@ node dist/cli.js doctor    # 应该全部通过
 `membrane-memory-x.y.z.tgz`，然后：
 
 ```bash
-npm install -g ./membrane-memory-0.1.6.tgz
+npm install -g ./membrane-memory-0.1.7.tgz
 membrane-memory doctor
 ```
 
