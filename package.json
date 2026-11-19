@@ -1,6 +1,6 @@
 ﻿{
   "name": "membrane-memory",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Temporal-aware, local-first, explainable memory engine for AI agents. Zero dependencies, single SQLite file, MCP server included.",
   "type": "module",
   "license": "MIT",
@@ -38,7 +38,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

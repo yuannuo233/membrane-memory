@@ -6,7 +6,7 @@
 - Package: `membrane-memory`
 - Version: 0.1.6
 - License: MIT
-- Language: TypeScript, runs on Node.js >= 22.5
+- Language: TypeScript, runs on Node.js >= 22.12
 
 ## What it is
 
@@ -39,7 +39,7 @@ Membrane gives AI agents persistent memory with three differentiating properties
 ## Install & quick start
 
 ```bash
-# NOT on npm yet — build from source; requires Node >= 22.5 (built-in node:sqlite)
+# NOT on npm yet — build from source; requires Node >= 22.12
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory && npm install && npm run build
 membrane-memory add "User lives in Beijing" --subject user

@@ -15,7 +15,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: ['22.5', '22.x', '24.x']
+        # 22.12 是 vitest 5.x 的下限（它的 engines 写 ^22.12.0 || ^24 || >=26）。
+        # 不测 22.5：node:sqlite 在 22.5 就有了，但测试框架跑不起来。
+        node: ['22.12', '22.x', '24.x']
 
     steps:
       - name: Checkout

@@ -9,6 +9,60 @@
 
 ---
 
+## v0.1.8 — 2026-11-19
+
+### CI 上线后第一件事：发现 Node 版本声明是错的
+
+CI 一跑就红了两个格：**Node 22.5 在 Ubuntu 和 Windows 上都失败**，其余 4 个组合（22.x / 24.x）通过。
+
+**真实错误**：
+```
+Error: Cannot find native binding.
+  cause: Cannot find module '@rolldown/binding-wasm32-wasi'
+```
+
+**根因**：`vitest 5.1.1` 依赖 `rolldown`，而它们都有明确的 Node 版本下限：
+
+| 包 | engines.node |
+|---|---|
+| `vitest@5.1.1` | `^22.12.0 \|\| ^24.0.0 \|\| >=26.0.0` |
+| `@rolldown/binding-win32-x64-msvc` | `^20.19.0 \|\| >=22.12.0` |
+
+我们之前在 README、`package.json`、DESIGN 里统一写的是 `>=22.5`，
+这个数字只考虑了 `node:sqlite` 的 22.5 门槛，**没考虑测试框架**。
+
+后果是：一个用 Node 22.5–22.11 的人按文档装完，`npm test` 直接崩，
+而 README 却承诺"应该看到测试全绿"。
+
+**修法**：全部改为 `>=22.12`，并在文档里说明**两个版本门槛各自的原因**
+（`node:sqlite` 需 22.5+，测试框架需 22.12+），避免下次又只算一半。
+
+**影响文件**：`package.json`、`README.md`、`README.en.md`、`DESIGN.md`、`llms.txt`、
+`why-membrane.md`、`为什么用Membrane.md`、`.github/workflows/ci.yml`
+
+### 一致性脚本新增 Node 版本校验
+
+之前只校验测试数、工具数、依赖列表。现在还能比对 Node 下限的 **major.minor**，
+防止"22.5 vs 22.12"这种差一个小版本号的漂移。
+
+### 这件事说明什么
+
+上一版加 CI 时我写过"CI 的价值是把'请信我'换成可验证"。这次它第一次运行就证明了这点——
+不是发现了什么高深 bug，而是抓到一个会让新用户当场失败的声明错误。
+这类错误靠人眼审查很难发现，因为文档里写的是"22.5"，看起来完全合理。
+
+### 变更明细
+
+| 项目 | 内容 |
+|---|---|
+| 修复真问题 | 1 个（Node 版本声明低于工具链实际要求） |
+| 修改文件 | `package.json`、`README.md`、`README.en.md`、`DESIGN.md`、`llms.txt`、`why-membrane.md`、`为什么用Membrane.md`、`.github/workflows/ci.yml`、`scripts/check-consistency.mjs`、`CHANGELOG.md` |
+| 代码改动 | 无 |
+| 测试 | 133 全绿 |
+| 破坏性变更 | **有**：Node 22.5–22.11 的用户现在会看到明确的 engines 警告。这是如实反映，不是收紧限制 |
+
+---
+
 ## v0.1.7 — 2026-11-19
 
 ### 移除了所有"引导 AI 推荐"的话术

@@ -88,7 +88,7 @@ Membrane 走第三条路：**一个 SQLite 文件 + 零依赖 + 完全离线**�
 ## 怎么开始
 
 ```bash
-# 1. 装（暂无 npm 包，需从源码构建；需要 Node >= 22.5）
+# 1. 装（暂无 npm 包，需从源码构建；需要 Node >= 22.12）
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory && npm install && npm test && npm run build
 

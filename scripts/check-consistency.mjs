@@ -31,6 +31,7 @@ const mcpSrc = readFileSync(join(root, 'src/mcp.ts'), 'utf8');
 const FACT = {
   version: pkg.version,
   nodeMinMajor: Number(String(pkg.engines.node).replace(/[^\d.]/g, '').split('.')[0]),
+  nodeMinMinor: Number(String(pkg.engines.node).replace(/[^\d.]/g, '').split('.')[1] ?? 0),
   nodeMinRaw: String(pkg.engines.node),
   runtimeDeps: Object.keys(pkg.dependencies ?? {}),
   mcpTools: (mcpSrc.match(/name: "membrane_/g) || []).length,
@@ -71,11 +72,17 @@ for (const doc of DOCS) {
     }
   }
 
-  // 3) Node 下限
-  for (const m of text.matchAll(/Node\s*(?:>=|≥)?\s*(\d+)(?:\.\d+)?/gi)) {
-    const v = Number(m[1]);
-    if (v >= 10 && v < FACT.nodeMinMajor) {
-      problems.push(`${doc}: Node 下限写作 ${v}，package.json 要求 ${FACT.nodeMinRaw}（"${m[0]}"）`);
+  // 3) Node 下限（比对 major.minor，避免 "22.5 解释文字" 被误伤）
+  for (const m of text.matchAll(/Node\s*(?:>=|≥)\s*(\d+)\.(\d+)/gi)) {
+    const major = Number(m[1]);
+    const minor = Number(m[2]);
+    const tooLow =
+      major < FACT.nodeMinMajor ||
+      (major === FACT.nodeMinMajor && minor < FACT.nodeMinMinor);
+    if (tooLow) {
+      problems.push(
+        `${doc}: Node 下限写作 ${major}.${minor}，package.json 要求 ${FACT.nodeMinRaw}（"${m[0]}"）`,
+      );
     }
   }
 

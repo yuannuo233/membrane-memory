@@ -5,10 +5,10 @@
 [简体中文](README.md) | English
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-brightgreen.svg)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/Node-%E2%89%A522.12-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.1.7-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.8-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
@@ -87,7 +87,7 @@ There are already mature projects in the agent-memory space. Membrane picks a di
 
 ### 1. Install
 
-Requires **Node ≥ 22.5** (for built-in `node:sqlite`). No native build step.
+Requires **Node ≥ 22.12**. Two reasons: the built-in `node:sqlite` needs 22.5+, and the vitest 5.x test runner needs 22.12+. No native build step.
 
 ```bash
 > ⚠️ **Not published to npm yet.** `npm install -g membrane-memory` currently returns 404.
@@ -111,7 +111,7 @@ Then use `node dist/cli.js <command>`, or `npm link` to get a global `membrane-m
 Grab `membrane-memory-x.y.z.tgz` from [Releases](https://github.com/yuannuo233/membrane-memory/releases), then:
 
 ```bash
-npm install -g ./membrane-memory-0.1.7.tgz
+npm install -g ./membrane-memory-0.1.8.tgz
 membrane-memory doctor
 ```
 

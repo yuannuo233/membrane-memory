@@ -98,7 +98,7 @@ Full list in the [README's Known Limitations section](README.en.md#known-limitat
 ## Getting started
 
 ```bash
-# 1. Install (not on npm yet — build from source; requires Node >= 22.5)
+# 1. Install (not on npm yet — build from source; requires Node >= 22.12)
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory && npm install && npm test && npm run build
 
