@@ -5,6 +5,7 @@
  * 用户拿去粘贴才发现。所以这里逐格式验"能被目标客户端解析"的关键特征。
  */
 import { describe, expect, it } from "vitest";
+import { resolve } from "node:path";
 import { buildMcpConfig, MCP_CLIENTS } from "../src/mcp-config.js";
 
 const OPTS = {
@@ -12,6 +13,20 @@ const OPTS = {
   cliPath: "C:\\我的项目\\membrane\\dist\\cli.js",
   dbPath: "D:\\记忆\\membrane.db",
 };
+
+/**
+ * db 路径经过 path.resolve() 归一化，而这个函数是**平台相关**的：
+ * 在 Windows 上 `D:\记忆\membrane.db` 已是绝对路径，原样返回；
+ * 在 Linux/macOS 上它不被认作绝对路径，会被拼到当前工作目录后面。
+ *
+ * nodePath 与 cliPath 不经过 resolve，任何平台都原样保留，所以只有 db 需要
+ * 按平台算期望值。这样测试在两种平台上都能验证"路径确实被正确传递"，
+ * 而不是硬编码 Windows 结果、在 CI 的 Linux runner 上必挂。
+ */
+const IS_WIN = process.platform === "win32";
+const EXPECTED_DB = IS_WIN ? OPTS.dbPath : resolve(OPTS.dbPath);
+/** Codex 的 TOML 用正斜杠，避免反斜杠被当成转义 */
+const EXPECTED_DB_FORWARD = EXPECTED_DB.replace(/\\/g, "/");
 
 describe("mcp-config：多客户端接入配置", () => {
   it("客户端清单完整且 id 不重复", () => {
@@ -27,7 +42,7 @@ describe("mcp-config：多客户端接入配置", () => {
     };
     expect(parsed.mcpServers.membrane.command).toBe(OPTS.nodePath);
     expect(parsed.mcpServers.membrane.args).toEqual([OPTS.cliPath, "mcp"]);
-    expect(parsed.mcpServers.membrane.env["MEMBRANE_DB"]).toBe(OPTS.dbPath);
+    expect(parsed.mcpServers.membrane.env["MEMBRANE_DB"]).toBe(EXPECTED_DB);
     expect(r.steps.join("\n")).toContain("claude_desktop_config.json");
   });
 
@@ -45,7 +60,7 @@ describe("mcp-config：多客户端接入配置", () => {
     const r = buildMcpConfig("codex", OPTS);
     expect(r.content).toContain("[mcp_servers.membrane]");
     expect(r.content).toContain('command = "C:/Program Files/nodejs/node.exe"');
-    expect(r.content).toContain('env = { MEMBRANE_DB = "D:/记忆/membrane.db" }');
+    expect(r.content).toContain(`env = { MEMBRANE_DB = "${EXPECTED_DB_FORWARD}" }`);
     expect(r.content).not.toContain("\\\\");
   });
 
