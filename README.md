@@ -5,10 +5,10 @@
 [English](README.en.md) | 简体中文
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/Node-%E2%89%A522.12-brightgreen.svg)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md#10-依赖白名单新增依赖需在此登记)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.1.8-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.9-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **时间感知、本地优先、可解释的 Agent 记忆引擎。**
@@ -86,7 +86,7 @@ Agent 记忆领域已有不少成熟项目。Membrane 选择了一个不同的�
 
 ### 1. 安装
 
-需要 **Node ≥ 22.12**。两个原因：① 内置 `node:sqlite` 要求 22.5+；② 测试框架 vitest 5.x 要求 22.12+。无需 `npm install` 拉原生模块。
+需要 **Node ≥ 24**。原因：内置 `node:sqlite` 在 22.x / 23.x 是实验特性，必须加 `--experimental-sqlite` 才能用；**从 Node 24 起默认启用**。为了"装完就能用、不用记 flag"，本项目的下限设为 24。
 
 > ⚠️ **尚未发布到 npm**。`npm install -g membrane-memory` 现在会返回 404。
 > 请用下面两种方式之一安装；npm 发布后会第一时间更新本节。
@@ -110,7 +110,7 @@ node dist/cli.js doctor    # 应该全部通过
 `membrane-memory-x.y.z.tgz`，然后：
 
 ```bash
-npm install -g ./membrane-memory-0.1.8.tgz
+npm install -g ./membrane-memory-0.1.9.tgz
 membrane-memory doctor
 ```
 
