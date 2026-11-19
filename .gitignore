@@ -29,3 +29,5 @@ reports/
 
 ## 临时文件
 .tmp-*.txt
+.msg.txt
+.*-msg.txt
