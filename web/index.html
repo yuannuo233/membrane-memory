@@ -23,6 +23,7 @@
       <button class="nav-item" data-view="recall"><span class="nav-ico">⌕</span>Recall</button>
       <button class="nav-item" data-view="ledger"><span class="nav-ico">≡</span>Ledger</button>
       <button class="nav-item" data-view="audit"><span class="nav-ico">◷</span>Audit Trail</button>
+      <button class="nav-item" data-view="ops"><span class="nav-ico">▤</span>Ops / Admin</button>
     </nav>
     <div class="sidebar-foot">
       <div class="status-dot"></div>
@@ -47,7 +48,7 @@
           <button data-mode="brief" class="active">平衡</button>
           <button data-mode="full">完整</button>
         </div>
-        <span class="chip" id="version-chip">v0.2.1</span>
+        <span class="chip" id="version-chip">v0.2.2</span>
         <span class="chip chip-ghost" id="health-chip">● healthy</span>
       </div>
     </header>
@@ -134,6 +135,47 @@
         <div class="panel-head"><h2>Audit Trail</h2><span class="panel-sub">immutable operation log · supersession chain</span></div>
         <div class="form-row inline-form"><label>Memory ID</label><input id="au-id" placeholder="paste a ULID from the ledger"><button class="btn" id="btn-audit">Trace</button></div>
         <div id="audit-results"></div>
+      </div>
+    </section>
+
+    <!-- Ops / Admin -->
+    <section class="view hidden" id="view-ops">
+      <div class="panel">
+        <div class="panel-head"><h2>Runtime Diagnostics</h2><span class="panel-sub">服务状态 · 不读取记忆正文</span></div>
+        <div class="diag-grid" id="ops-diag"><div class="empty">loading…</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Request Log</h2>
+          <span class="ledger-tools">
+            <select id="log-level" class="mini-select">
+              <option value="">all levels</option>
+              <option value="info">info+</option>
+              <option value="warn">warn+</option>
+              <option value="error">error</option>
+            </select>
+            <input id="log-limit" class="mini-input" type="number" min="1" max="500" value="100">
+            <label class="checkbox inline"><input type="checkbox" id="log-auto"> auto refresh (5s)</label>
+            <button class="btn small" id="btn-log-refresh">Refresh</button>
+          </span>
+        </div>
+        <div class="table-wrap">
+          <table id="log-table">
+            <thead><tr><th>Time</th><th>Level</th><th>Event</th><th>Method</th><th>Path</th><th>Status</th><th>ms</th><th>Detail</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="hint" style="margin-top:10px" id="log-meta"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Multi-task Isolation</h2><span class="panel-sub">同一 Agent 多任务，记忆到底会不会串？</span></div>
+        <div id="ops-isolation"><div class="empty">run the probe to see</div></div>
+        <div class="form-actions" style="margin-top:12px">
+          <button class="btn primary" id="btn-isolation">Run isolation probe</button>
+          <span class="hint">只使用临时内存库，不读写你的数据。</span>
+        </div>
       </div>
     </section>
   </main>

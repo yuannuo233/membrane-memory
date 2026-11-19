@@ -10,6 +10,7 @@ data/
 *.db
 *.db-shm
 *.db-wal
+*.db.log
 
 ## IDE / OS
 .vs/

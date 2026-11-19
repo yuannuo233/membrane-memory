@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md#10-依赖白名单新增依赖需在此登记)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.2-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **时间感知、本地优先、可解释的 Agent 记忆引擎。**
@@ -23,7 +23,7 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 > 一句话：给 AI Agent 一个**过目不忘、还会告诉你"为什么想起这条"**的记忆脑。
 > 装上就能用——不联网、不下模型、不要 API key、零原生依赖。
 
-> 🔴 **诚实声明（请先读）**：这是 v0.2 早期项目，单人开发、201 个测试（CI 实时验证）、**尚无真实用户验证**。
+> 🔴 **诚实声明（请先读）**：这是 v0.2 早期项目，单人开发、210 个测试（CI 实时验证）、**尚无真实用户验证**。
 > 下方「[已知局限](#已知局限别踩坑)」把我们所有短板逐条写明了，建议先看完再决定用不用。
 > 我们不做"benchmark 刷到第一"的宣传——更看重数字能被你自己复现。
 
@@ -48,7 +48,8 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 
 | 项目 | 现状 | 风险 |
 |---|---|---|
-| **没有真实用户验证** | 201 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
+| **没有真实用户验证** | 210 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
+| **同 namespace 多任务会串** | 只有 namespace 隔离，没有自动 `task_id`；同 namespace 的任务记忆会一起进候选 | 多任务必须按 `task-<id>` 分 namespace，见上文约定 |
 | **跨进程并发只有 WAL 兜底** | SQLite 单写者模型，多进程同时写会排队 | 个人用没问题；高并发场景会成瓶颈 |
 | **性能只测到 1000 条** | 1000 条写入/查询在秒级 | 10 万条以上未压测，可能变慢 |
 | **doctor 样本很小** | 召回 5 条 / 更新 8 组 | **是回归自检，不是 benchmark**，不能作为跨项目横向比较的依据 |
@@ -95,7 +96,7 @@ Agent 记忆领域已有不少成熟项目。Membrane 选择了一个不同的�
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # 只装开发依赖（typescript/vitest/tsx），运行时依赖只有 ulid
-npm test           # 全部通过（当前 201 个用例）
+npm test           # 全部通过（当前 210 个用例）
 npm run build
 node dist/cli.js doctor    # 应该全部通过
 ```
@@ -108,7 +109,7 @@ node dist/cli.js doctor    # 应该全部通过
 `membrane-memory-x.y.z.tgz`，然后：
 
 ```bash
-npm install -g ./membrane-memory-0.2.1.tgz
+npm install -g ./membrane-memory-0.2.2.tgz
 membrane-memory doctor
 ```
 
@@ -159,6 +160,8 @@ m.close();
 **所有主流工具的配置模板见 [适配配置/各工具接入配置.md](适配配置/各工具接入配置.md)**（含 zcode、Claude Code、Cursor、Cline、反重力、AstrBot、DeepSeek Harness 等）。
 
 想用网页控制台？双击 `启动控制台.bat`，浏览器打开 `http://127.0.0.1:8317`。
+
+控制台左侧的 **Ops / Admin** 是给懂行的人看的运维页：运行状态、数据库 schema/大小、LLM/embedding 是否配置、请求日志（默认落 `membrane.db.log`，**不记录记忆正文/查询词**）、以及“多任务隔离自检”按钮。对应只读接口：`/api/admin/diagnostics`、`/api/admin/logs`、`/api/admin/isolation-check`。
 
 ---
 
@@ -304,6 +307,15 @@ membrane-memory import 我的备份.json          # 按 id 去重，不覆盖目
 导入是幂等的——同一份备份导两次，第二次全部跳过；实体按 `(namespace, name)` 复用，
 不会因为两边 id 不同就插出一堆断边。
 
+### 多任务 / 多用户隔离（重要使用约定）
+
+`namespace` 是硬过滤：全文、模糊、向量、图、列表、统计都按它隔离；实体唯一键也是 `(namespace, name)`。
+
+- **同一个 namespace 下，多任务记忆会互相召回**。任务 A 写“数据库用 PostgreSQL”、任务 B 写“数据库用 MySQL”，查询“数据库”时两条都会进候选——这不是数据库串行，是语义候选混在一起。
+- **不同 namespace 不会串**：A 的查询只返回 A，B 只返回 B（doctor 剧本 6 与 Ops 页面的隔离自检会当场验证，串扰 0）。
+- 推荐用法：每个任务一个 `task-<任务id>`（namespace 只能字母/数字/下划线/连字符）；共享知识单独放 `shared`，查询时分别查任务 namespace + `shared`，再由应用层合并。
+- 当前**没有**自动 `task_id/session` 字段；要“调用方不传 namespace、引擎自动按任务隔离”，需要 schema v3 的全链路改造，尚未做。
+
 ### Docker（可选）
 
 ```bash
@@ -325,7 +337,7 @@ README 里的数字全部来自 `membrane-memory doctor`——**换台机器跑�
 
 ```
 ╔══════════════════════════════════════════════╗
-║   Membrane Doctor · 可复现自检报告 v0.2.1      ║
+║   Membrane Doctor · 可复现自检报告 v0.2.2      ║
 ╚══════════════════════════════════════════════╝
 
 【剧本 1 · 写入召回】      命中率 100%  (5/5)

@@ -30,17 +30,21 @@ async function api(path, opts = {}) {
 }
 
 // ---- 视图切换 ----
-const TITLES = { overview: 'Overview', ingest: 'Ingest Pipeline', recall: 'Hybrid Recall', ledger: 'Memory Ledger', audit: 'Audit Trail' };
+const TITLES = { overview: 'Overview', ingest: 'Ingest Pipeline', recall: 'Hybrid Recall', ledger: 'Memory Ledger', audit: 'Audit Trail', ops: 'Ops / Admin' };
+function showView(v) {
+  if (!TITLES[v]) v = 'overview';
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  document.querySelectorAll('.view').forEach(s => s.classList.add('hidden'));
+  $('view-' + v).classList.remove('hidden');
+  $('view-title').textContent = TITLES[v];
+  if (v !== 'ops' && state.logTimer) { clearInterval(state.logTimer); state.logTimer = null; $('log-auto').checked = false; }
+  if (v === 'overview') loadStats();
+  if (v === 'ledger') loadLedger();
+  if (v === 'ops') loadOps();
+  history.replaceState(null, '', '#' + v);
+}
 document.querySelectorAll('.nav-item').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const v = btn.dataset.view;
-    document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b === btn));
-    document.querySelectorAll('.view').forEach(s => s.classList.add('hidden'));
-    $('view-' + v).classList.remove('hidden');
-    $('view-title').textContent = TITLES[v];
-    if (v === 'overview') loadStats();
-    if (v === 'ledger') loadLedger();
-  });
+  btn.addEventListener('click', () => showView(btn.dataset.view));
 });
 
 // ---- Token 模式 ----
@@ -366,6 +370,121 @@ $('btn-export').addEventListener('click', async () => {
 // ---- 工具 ----
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
+// ---- Ops / Admin ----
+function fmtBytes(n) {
+  if (!n && n !== 0) return '—';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+function fmtDuration(ms) {
+  if (ms === null || ms === undefined) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  const min = Math.floor(s / 60);
+  if (min < 60) return min + 'm ' + (s % 60) + 's';
+  return Math.floor(min / 60) + 'h ' + (min % 60) + 'm';
+}
+
+async function loadOps() {
+  await Promise.all([loadDiagnostics(), loadLogs()]);
+}
+async function loadDiagnostics() {
+  const box = $('ops-diag');
+  try {
+    const d = await api('/api/admin/diagnostics');
+    const caps = d.capabilities || {};
+    box.innerHTML = `
+      <div class="diag-cell"><span class="diag-k">VERSION</span><b>${esc(d.version)}</b></div>
+      <div class="diag-cell"><span class="diag-k">UPTIME</span><b>${fmtDuration(d.uptimeMs)}</b></div>
+      <div class="diag-cell"><span class="diag-k">NODE</span><b>${esc(d.node)}</b></div>
+      <div class="diag-cell"><span class="diag-k">PLATFORM</span><b>${esc(d.platform)}</b></div>
+      <div class="diag-cell"><span class="diag-k">SCHEMA</span><b>v${d.db?.schemaVersion ?? '—'}</b></div>
+      <div class="diag-cell"><span class="diag-k">DB SIZE</span><b>${fmtBytes(d.db?.bytes)}</b></div>
+      <div class="diag-cell"><span class="diag-k">MEMORIES</span><b>${d.stats?.total ?? '—'} <small>${d.stats?.current ?? '—'} active</small></b></div>
+      <div class="diag-cell"><span class="diag-k">GRAPH</span><b>${d.stats?.entities ?? '—'} entities / ${d.stats?.relations ?? '—'} edges</b></div>
+      <div class="diag-cell"><span class="diag-k">LLM</span><b>${caps.llmConfigured ? esc(caps.extractionModel || 'on') : 'off (pure FTS)'}</b></div>
+      <div class="diag-cell"><span class="diag-k">EMBEDDING</span><b>${caps.embeddingConfigured ? esc(caps.embeddingModel || 'on') : 'off'}</b></div>
+      <div class="diag-cell"><span class="diag-k">BIND</span><b>${esc(d.security?.host || '—')}:${esc(d.security?.port ?? '—')}</b></div>
+      <div class="diag-cell"><span class="diag-k">AUTH</span><b>${d.security?.tokenConfigured ? 'Bearer token on' : 'local only'}</b></div>
+      <div class="diag-cell wide"><span class="diag-k">DB PATH</span><b class="mono">${esc(d.db?.path || '—')}</b></div>
+      <div class="diag-cell wide"><span class="diag-k">LOG FILE</span><b class="mono">${esc(d.logging?.path || 'memory only')}</b>${d.logging?.fileError ? ` <span class="err">${esc(d.logging.fileError)}</span>` : ''}</div>`;
+  } catch (e) { box.innerHTML = `<div class="empty err">${esc(e.message)}</div>`; }
+}
+
+async function loadLogs() {
+  const tbody = document.querySelector('#log-table tbody');
+  const level = $('log-level').value;
+  const limit = Math.max(1, Math.min(500, Number($('log-limit').value) || 100));
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (level) q.set('level', level);
+  tbody.innerHTML = '<tr><td colspan="8" class="empty">loading…</td></tr>';
+  try {
+    const r = await api('/api/admin/logs?' + q.toString());
+    if (!r.entries.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">no log entries yet</td></tr>';
+      $('log-meta').textContent = r.logging?.path ? `log file: ${r.logging.path}` : 'memory-only logging';
+      return;
+    }
+    tbody.innerHTML = r.entries.slice().reverse().map(e => {
+      const time = new Date(e.ts).toLocaleTimeString();
+      const detail = Object.entries(e)
+        .filter(([k]) => !['ts', 'level', 'event', 'method', 'path', 'status', 'ms'].includes(k))
+        .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' · ');
+      const levelClass = e.level === 'error' ? 'del' : e.level === 'warn' ? 'sup' : 'active';
+      return `<tr>
+        <td class="mono">${esc(time)}</td>
+        <td><span class="badge ${levelClass}">${esc(e.level)}</span></td>
+        <td class="mono">${esc(e.event)}</td>
+        <td class="mono">${esc(e.method || '—')}</td>
+        <td class="mono content-cell" title="${esc(e.path || '')}">${esc(e.path || '—')}</td>
+        <td class="mono">${esc(e.status ?? '—')}</td>
+        <td class="mono">${esc(e.ms ?? '—')}</td>
+        <td class="muted" title="${esc(detail)}">${esc(detail)}</td>
+      </tr>`;
+    }).join('');
+    const lg = r.logging || {};
+    $('log-meta').textContent = `showing ${r.count} · buffered ${lg.buffered ?? '—'} · written ${lg.written ?? '—'}` +
+      (lg.fileError ? ` · file error: ${lg.fileError}` : '') + (lg.path ? ` · ${lg.path}` : ' · memory only');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty err">${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function runIsolationProbe() {
+  const box = $('ops-isolation');
+  box.innerHTML = '<div class="empty">running in-memory probe…</div>';
+  try {
+    const r = await api('/api/admin/isolation-check');
+    const shared = r.sharedNamespace;
+    const sep = r.separatedNamespaces;
+    box.innerHTML = `
+      <div class="iso-row ${shared.mixed ? 'iso-warn' : 'iso-ok'}">
+        <div class="iso-head">同一 namespace（默认用法）</div>
+        <div>命中 ${shared.hits} 条，涉及任务：${shared.tasks.map(t => `<span class="tag">${esc(t)}</span>`).join(' ') || '—'}</div>
+        <div class="iso-verdict">${shared.mixed ? '⚠️ 两个任务的记忆会互相召回 → 有串扰风险' : '未发生串扰'}</div>
+      </div>
+      <div class="iso-row ${sep.pass ? 'iso-ok' : 'iso-warn'}">
+        <div class="iso-head">每个任务独立 namespace</div>
+        <div>任务A 命中 ${sep.taskA.hits} 条（${esc(sep.taskA.tasks.join(', ') || '—')}）；任务B 命中 ${sep.taskB.hits} 条（${esc(sep.taskB.tasks.join(', ') || '—')}）</div>
+        <div class="iso-verdict">${sep.pass ? '✅ 串扰 0 条（隔离成立）' : `❌ 串扰 ${sep.leakage} 条`}</div>
+      </div>
+      <div class="hint">${esc(r.note)}</div>`;
+  } catch (e) { box.innerHTML = `<div class="empty err">${esc(e.message)}</div>`; }
+}
+
+$('btn-log-refresh').addEventListener('click', loadLogs);
+$('log-level').addEventListener('change', loadLogs);
+$('log-limit').addEventListener('keydown', e => { if (e.key === 'Enter') loadLogs(); });
+$('log-auto').addEventListener('change', e => {
+  if (state.logTimer) { clearInterval(state.logTimer); state.logTimer = null; }
+  if (e.target.checked) state.logTimer = setInterval(loadLogs, 5000);
+});
+$('btn-isolation').addEventListener('click', runIsolationProbe);
+
 // ---- boot ----
 applyMode(state.mode);
-loadStats();
+const initialView = location.hash.slice(1);
+const initialBtn = initialView ? document.querySelector(`.nav-item[data-view="${initialView}"]`) : null;
+if (initialBtn) initialBtn.click();
+else loadStats();

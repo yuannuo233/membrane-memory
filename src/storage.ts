@@ -188,6 +188,11 @@ export class Storage {
     return s;
   }
 
+  /** 当前代码要求的 schema 版本（诊断用） */
+  get schemaVersion(): number {
+    return SCHEMA_VERSION;
+  }
+
   /**
    * 事务包装（**可重入**）。
    * 最外层用 BEGIN IMMEDIATE；嵌套层用 SAVEPOINT/RELEASE，这样 insert() 这类

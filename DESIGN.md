@@ -247,22 +247,23 @@ CREATE TABLE memory_entities ( memory_id TEXT NOT NULL, entity_id TEXT NOT NULL 
 - [x] 关系时间感知：记忆被取代/遗忘 → 派生关系 `valid_to` 关闭，不删行，`asOf` 仍可查
 - [x] 断言面扩展：CLI（relations/link/entities/embed-backfill）、MCP（10 工具）、REST（/api/relations、/api/entities）
 - [x] doctor 扩到 5 剧本 7 项检查，原三项数字保持不变（100% / 88% / 0%）
-- 测试：新增 vector 16 + graph 26，累计 **175/175 全绿**（10 个测试文件；v0.2.1 质量版增至 **201/201**，13 个文件）
+- 测试：新增 vector 16 + graph 26，累计 **175/175 全绿**（10 个测试文件；v0.2.1 质量版增至 **201/201**，13 个文件；v0.2.2 运维版增至 **210/210**，15 个文件）
 
-### 当前状态（2026-11-19——M1~M5 + 质量版全部完成，201/201 全绿）
-- ✅ **M1 + M2 + M3(MCP/CLI/REST/UI) + M4 + M5 全部验收**：`npm test` = 构建(tsc)通过 + vitest **201/201 全绿**
-  （model 15 + storage 18 + engine 37 + extract 9 + mcp 9 + server 18 + tenant 10 + robustness 24 + vector 16 + graph 26 + portability 6 + mcp-config 7 + update 6）。
+### 当前状态（2026-11-18——M1~M5 + 质量版 + 可观测版全部完成，210/210 全绿）
+- ✅ **M1 + M2 + M3(MCP/CLI/REST/UI) + M4 + M5 全部验收**：`npm test` = 构建(tsc)通过 + vitest **210/210 全绿**
+  （model 15 + storage 18 + engine 37 + extract 9 + mcp 9 + server 21 + tenant 10 + robustness 24 + vector 16 + graph 26 + portability 6 + mcp-config 7 + update 6 + logger 4 + isolation 2）。
   - MCP server 经**真实子进程端到端验证**（initialize/tools-list/add/recall 全通，退出码 0）——抓到并修复"handleLine 未写 stdout"的真 bug。
   - REST+UI 经**真实 HTTP 端到端验证**（add/recall/stats 全通）——抓到并修复"webDir 用 cwd 导致换目录启动 UI 404"的真 bug。
 - 📋 适配矩阵已核实：zcode（智谱 GLM）、WorkBuddy、DeepSeek Harness、Claude、Cursor/Cline/Windsurf/反重力/AstrBot 等均可用同一 MCP server 接入，见 `适配配置/`。
 - ✅ **多租户隔离**：`memories.namespace`（默认 "default"）+ 建表/去重/取代/召回/列表/实体/关系全链路过滤 + `ensureColumn` 幂等迁移 + REST/MCP/CLI 全接入。
   - ⚠️ 迁移注意：索引 `idx_memories_ns` 必须在**建列之后**创建，否则老库升级报 `no such column: namespace`（已修 + 回归测试覆盖）。
-- 📊 doctor 数字（5 剧本 7 项）：召回 100%(5/5)、current@1 88%(7/8)、contam@5 0%、跨会话 ✓、向量余弦 1.00、图关系答出 + 两跳 2 边——README 数字全部来自它。
+- 📊 doctor 数字（6 剧本 9 项）：召回 100%(5/5)、current@1 88%(7/8)、contam@5 0%、跨会话 ✓、向量余弦 1.00、图关系答出 + 两跳 2 边、隔离串扰 0 + 同 namespace 混召回复现——README 数字全部来自它。
 - ✅ **v0.2.1 质量版**：删除 5 处死代码；抽出 `src/input.ts` 统一 CLI/MCP/REST 三套入参解析（消除口径漂移）；修 `GET /api/memories` 的 `limit` 失效、脏 kind 导致 NaN 分、`forget` 残留 `memory_entities` 三个真 bug；新增 `exportAll`/`importAll` 全量 JSON 备份（含历史底稿/证据/图/向量，幂等导入）；新增 `mcp-config` 接入配置生成器（21 个客户端，路径自动填）。
 - ✅ **v0.2.1 编辑 + 控制台 v2**：`engine.update/updateAsync` 版本化编辑（新版本取代旧版本，旧正文/证据/关系保留，`asOf` 仍可查）；REST `PATCH|PUT|DELETE /api/memories/:id`；控制台支持 ultra/brief/full 三 Token 模式、详情、编辑、遗忘、台账筛选、备份导出；补真实 HTTP PATCH 防回归测试。
 - ✅ **v0.2.1 生态**：OpenAI Function Calling 四件套、REST/SDK 接入手册、Node/Python 零依赖客户端、Dockerfile（Node 24 多阶段 + `/data` volume）。
-- ✅ 源码结构：`src/`（types / model / tokenize[中文bigram] / ulid / storage / config / input[入参解析] / index
-  / engine[门面] / extract[抽取] / llm[端点封装] / graph-extract[规则抽取] / mcp-config[接入配置生成] / mcp / server / doctor / cli）；`test/` 13 套测试。
+- ✅ **v0.2.2 可观测版**：`MemoryLogger` JSONL + ring + 字段脱敏（正文/查询/证据/token 拒写）；`/api/admin/diagnostics`、`/api/admin/logs`、`/api/admin/isolation-check`；控制台 Ops/Admin 页；`probeTaskIsolation()` 证明同 namespace 会混、跨 namespace 零泄漏；doctor 增至 6 剧本 9 项检查。
+- ✅ 源码结构：`src/`（types / model / tokenize[中文bigram] / ulid / storage / config / input[入参解析] / logger / isolation / index
+  / engine[门面] / extract[抽取] / llm[端点封装] / graph-extract[规则抽取] / mcp-config[接入配置生成] / mcp / server / doctor / cli）；`test/` 15 套测试。
 - 复跑命令：`npm test`（等价于 `tsc -p tsconfig.json && vitest run`）；文档一致性 `npm run check`。
 - ✅ **freshness 已校准**：采用真·半衰期公式 `exp(-ln2·age/halfLife)`，age=halfLife 时=0.5；文档第 4 节与测试同步更新。
 - 仍未做（明确留给 v0.3）：Reflect 周期性巩固、真正的语义级实体消歧（"苹果"公司/水果）、

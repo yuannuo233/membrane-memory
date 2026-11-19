@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Membrane } from "../src/engine.js";
 import { route, startServer } from "../src/server.js";
+import { MemoryLogger } from "../src/logger.js";
 import { BASE_TIME, newTmpDir, rmDir } from "./helpers.js";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
@@ -33,12 +34,58 @@ async function r(method: string, path: string, body: Record<string, unknown> = {
 describe("REST API", () => {
   it("health 返回服务信息", async () => {
     const res = await r("GET", "/api/health");
-    expect(res.body).toMatchObject({ ok: true, service: "membrane-memory", version: "0.2.1" });
+    expect(res.body).toMatchObject({ ok: true, service: "membrane-memory", version: "0.2.2" });
   });
 
   it("空库 stats 全 0", async () => {
     const res = await r("GET", "/api/stats");
     expect(res.body).toMatchObject({ total: 0, current: 0 });
+  });
+
+  it("admin diagnostics 暴露运行状态，但不泄露 apiKey", async () => {
+    const logger = new MemoryLogger({ maxEntries: 20 });
+    const res = await route(m, "GET", "/api/admin/diagnostics", {}, webDir, {
+      logger,
+      startedAt: Date.now() - 5000,
+      host: "127.0.0.1",
+      port: 8317,
+      tokenConfigured: true,
+      version: "0.2.2",
+    });
+    const body = res.body as {
+      db: { schemaVersion: number };
+      capabilities: Record<string, unknown>;
+      security: Record<string, unknown>;
+      logging: { maxEntries: number };
+      uptimeMs: number;
+    };
+    expect(body.db.schemaVersion).toBe(2);
+    expect(body.uptimeMs).toBeGreaterThan(0);
+    expect(body.security.tokenConfigured).toBe(true);
+    expect(body.logging.maxEntries).toBe(20);
+    expect(body.capabilities).not.toHaveProperty("apiKey");
+    expect(JSON.stringify(body)).not.toContain("sk-");
+  });
+
+  it("admin logs 返回 ring 内容，且不返回正文/查询", async () => {
+    const logger = new MemoryLogger();
+    logger.info("test.event", { content: "不能出现的正文", query: "不能出现的查询", path: "/api/recall" });
+    const res = await route(m, "GET", "/api/admin/logs", { limit: "10" }, webDir, { logger });
+    const body = res.body as { entries: { event: string; path: string }[]; count: number };
+    expect(body.count).toBe(1);
+    expect(body.entries[0]).toMatchObject({ event: "test.event", path: "/api/recall" });
+    expect(JSON.stringify(body)).not.toContain("不能出现");
+  });
+
+  it("admin isolation-check 当场证明跨 namespace 不串", async () => {
+    const res = await r("GET", "/api/admin/isolation-check");
+    const body = res.body as {
+      sharedNamespace: { mixed: boolean };
+      separatedNamespaces: { leakage: number; pass: boolean };
+    };
+    expect(body.sharedNamespace.mixed).toBe(true);
+    expect(body.separatedNamespaces.leakage).toBe(0);
+    expect(body.separatedNamespaces.pass).toBe(true);
   });
 
   it("POST memories 写入 → GET 取回 → recall 命中", async () => {

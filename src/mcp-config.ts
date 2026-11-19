@@ -298,7 +298,7 @@ export function buildMcpConfig(clientId: string, opts: McpConfigOptions = {}): M
       content = JSON.stringify(
         {
           name: "membrane-local",
-          version: "0.2.1",
+          version: "0.2.2",
           description: "Membrane 记忆脑：时间感知、可解释的 Agent 记忆",
           author: { name: "local" },
           license: "MIT",

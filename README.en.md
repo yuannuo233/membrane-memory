@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.2-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
@@ -23,7 +23,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 > Give your agent a memory that never forgets — and tells you **why** it recalled each item.
 > Works out of the box: no network, no model download, no API key, no native dependencies.
 
-> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 201 tests (verified live by CI), **no real-world users yet**.
+> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 210 tests (verified live by CI), **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
 > We do **not** chase "number one on benchmarks" — that is exactly how comparable projects fell from grace.
 
@@ -48,7 +48,8 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Item | Current state | Risk |
 |---|---|---|
-| **No real-world users yet** | All 201 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
+| **No real-world users yet** | All 210 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
+| **Tasks share memory within one namespace** | Only `namespace` isolation; no automatic `task_id`; task memories in one namespace become candidates together | Use `task-<id>` per task, see the isolation section above |
 | **Cross-process concurrency = WAL only** | SQLite single-writer; concurrent writers queue | Fine for personal use; a bottleneck under load |
 | **Performance tested only to 1,000 records** | Writes/queries in seconds at 1k | 100k+ not stress-tested |
 | **Doctor sample is tiny** | 5 recall cases / 8 update pairs | **Regression self-check, not a benchmark** — not a basis for cross-project comparison |
@@ -95,7 +96,7 @@ Requires **Node ≥ 24**. Reason: the built-in `node:sqlite` is experimental in 
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # dev dependencies only (typescript/vitest/tsx); the only runtime dep is ulid
-npm test           # all pass (201 cases at the moment)
+npm test           # all pass (210 cases at the moment)
 npm run build
 node dist/cli.js doctor    # should report all checks passed
 ```
@@ -107,7 +108,7 @@ Then use `node dist/cli.js <command>`, or `npm link` to get a global `membrane-m
 Grab `membrane-memory-x.y.z.tgz` from [Releases](https://github.com/yuannuo233/membrane-memory/releases), then:
 
 ```bash
-npm install -g ./membrane-memory-0.2.1.tgz
+npm install -g ./membrane-memory-0.2.2.tgz
 membrane-memory doctor
 ```
 
@@ -155,6 +156,8 @@ Start the MCP server with `membrane-memory mcp`, then add to your tool's config 
 **Templates for every major tool** in [适配配置/各工具接入配置.md](适配配置/各工具接入配置.md) (zcode, Claude Code, Cursor, Cline, Antigravity, AstrBot, DeepSeek Harness…).
 
 Web console: double-click `启动控制台.bat`, open `http://127.0.0.1:8317`.
+
+The **Ops / Admin** tab is the operator view: runtime status, DB schema/size, whether LLM/embedding is configured, request logs (default `membrane.db.log`, **never memory content or queries**), and a one-click multi-task isolation probe. Read-only endpoints: `/api/admin/diagnostics`, `/api/admin/logs`, `/api/admin/isolation-check`.
 
 ---
 
@@ -284,6 +287,15 @@ Open `http://127.0.0.1:8317` after `membrane-memory serve`:
 REST equivalent: `PATCH|PUT /api/memories/:id`, `DELETE /api/memories/:id`.
 For non-MCP clients see [适配配置/REST与SDK接入.md](适配配置/REST与SDK接入.md) (OpenAI tools schema, Node/Python zero-dependency clients, Docker).
 
+### Multi-task / multi-user isolation (read this)
+
+`namespace` is a hard filter across FTS, fuzzy, vector, graph, list, and stats; the entity unique key is `(namespace, name)`.
+
+- **Within one namespace, memories from multiple tasks will be recalled together.** Task A ("DB is PostgreSQL") and Task B ("DB is MySQL") both become candidates for the query "database". It is not a database race; it is semantic candidate mixing.
+- **Different namespaces never mix**: A returns only A, B only B (doctor scenario 6 and the Ops isolation probe verify zero leakage).
+- Recommended: one namespace per task, `task-<taskId>` (letters/digits/underscore/hyphen only); put shared knowledge in `shared` and query task namespace + `shared` separately, merging in your application.
+- There is **no automatic `task_id`/`session` field** yet; automatic per-task isolation would require a full schema v3 migration and is not implemented.
+
 ---
 
 ## Reproducible self-check (doctor)
@@ -291,7 +303,7 @@ For non-MCP clients see [适配配置/REST与SDK接入.md](适配配置/REST与S
 Every number here comes from `membrane-memory doctor` — **same result on any machine** (fixed clock + in-memory DB).
 
 ```
-Doctor Report v0.2.1
+Doctor Report v0.2.2
 Scenario 1 · Write & recall    hit rate 100%  (5/5)
 Scenario 2 · Stale update      current@1 88%  (7/8)
                                contamination@5 0%

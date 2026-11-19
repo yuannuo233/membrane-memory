@@ -112,6 +112,9 @@ MEMBRANE_URL=http://127.0.0.1:8317 python 适配配置/examples/python-client.py
 | GET | `/api/relations?a=&b=` | 关系查询（无向 BFS） |
 | GET | `/api/entities?memoryId=` | 实体 |
 | GET | `/api/export` | 全量备份（`?noEmbeddings=1` 不带向量） |
+| GET | `/api/admin/diagnostics` | 运行诊断（版本/uptime/DB schema/统计/能力/安全/日志；不暴露 apiKey） |
+| GET | `/api/admin/logs?limit=&level=` | 最近结构化日志（不返回记忆正文/查询） |
+| GET | `/api/admin/isolation-check` | 现场跑多任务隔离探针（同 namespace 混召回 / 跨 namespace 零泄漏） |
 | GET | `/api/memories/:id` | mem0 兼容路径在 `/v1/memories*` |
 
 ## 7. 常见坑
@@ -121,3 +124,4 @@ MEMBRANE_URL=http://127.0.0.1:8317 python 适配配置/examples/python-client.py
 - 同一内容重复写入返回 `duplicate`，不会重复存。
 - 向量维度必须一致；换 embedding 模型后先 `embed-backfill --force` 重建，别混维度。
 - 备份 JSON 含向量，换机器恢复时要么维度一致，要么 `import` 会自动跳过冲突向量并计数。
+- **多任务隔离**：`namespace` 是硬过滤；同一个 namespace 下多任务记忆会互相召回（任务 A 和任务 B 都进候选），不同 namespace 串扰为 0。每个任务用 `task-<id>`，共享知识单独 `shared`，查询时分别查再合并。当前没有自动 `task_id` 字段。

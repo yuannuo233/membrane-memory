@@ -9,6 +9,55 @@
 
 ---
 
+## v0.2.2 — 2026-11-18
+
+运维可观测版：给懂行的人一个能看日志/诊断的后台，并把“一个 Agent 多任务会不会串记忆”做成可复现实验。
+**破坏性变更：无**；新增只读接口与可选日志文件，默认不影响旧用法。
+
+### 1. 结构化运行日志（`src/logger.ts`）
+
+- 新增 `MemoryLogger`：JSONL 追加文件 + 内存 ring（默认 500 条，可配 `maxEntries`），级别 `info/warn/error`。
+- 默认日志路径为数据库文件旁 `<db>.log`；可用 `MEMBRANE_LOG_FILE` 或 `ServerOptions.logFile` 覆盖；`:memory:` 库默认只留内存。
+- **脱敏底线**：`content/query/body/evidence/quote/memory/prompt/authorization/apiKey/token` 等字段直接拒写；嵌套对象不展开；字符串截断 500 字符。
+- 写盘失败不阻断服务：错误记录在 `stats().fileError`，后台可见。
+
+### 2. 运维后台（Ops / Admin）
+
+新增三个只读接口：
+
+| 接口 | 返回 |
+|---|---|
+| `GET /api/admin/logs?limit=&level=` | 最近 ring 日志 + 日志统计（路径/已写/丢弃/文件错误） |
+| `GET /api/admin/diagnostics` | 版本、uptime、pid、Node/平台、RSS、DB 路径/schemaVersion/字节数、统计、LLM/embedding 是否配置（**不暴露 apiKey**）、监听地址/是否启用 token、日志统计 |
+| `GET /api/admin/isolation-check` | 现场跑 `probeTaskIsolation()`，返回同 namespace 混召回 + 跨 namespace 零泄漏 |
+
+- 真实 HTTP 请求日志：只记 `/api/*` 的 method/path/status/耗时，**不记 query/body**；401 记 `http.auth_failed`，异常记 `http.error`。
+- `startServer` 启动时打印 Dashboard 与 `/#ops` 地址；监听 `0` 端口时回填真实端口到诊断上下文。
+- 控制台新增 **Ops / Admin** 页：诊断卡、请求日志表（级别过滤、条数、5 秒自动刷新）、隔离自检按钮；日志级别色与空状态样式。
+
+### 3. 多任务隔离：结论与实验
+
+数据模型仍只有 `namespace`，没有 `task_id`/`session` 字段。新增 `src/isolation.ts` 的 `probeTaskIsolation()`（`:memory:` 临时库、固定时钟、不碰用户数据）：
+
+- **同 namespace**：任务 A“数据库用 PostgreSQL”和任务 B“数据库用 MySQL”都会被“数据库”召回 → `mixed=true`。不是数据库串行，是语义候选混在一起。
+- **不同 namespace**：A 只命中 A，B 只命中 B，`leakage=0`，`pass=true`。
+- 使用约定：每个任务 `task-<id>`；共享知识单独 `shared`，查询时分别查任务 namespace + `shared` 再合并。当前不做自动 task 隔离（需要 schema v3 全链路改造）。
+- doctor 新增剧本 6（多任务隔离），验收检查从 7 项增至 **9 项**；README/README.en 写明“同 namespace 会串”的使用边界。
+
+### 4. 测试与验证
+
+- 新增 `test/logger.test.ts`（4：ring 上限、脱敏、JSONL 落盘/截断、级别过滤）。
+- 新增 `test/isolation.test.ts`（2：探针、真实引擎跨 namespace）。
+- `test/server.test.ts` 新增 3 条（诊断不泄露 apiKey、日志不返回正文、隔离接口），共 21 条。
+- 合计 **210/210 全绿，15 个测试文件**；doctor 九项全过（100% / 88% / 0% / ✓ / 1.00 / 图关系✓ / 隔离 0 泄漏 + 同 namespace 混召回复现）。
+- 真实浏览器验收 Ops：诊断正常、请求日志 6 条、隔离按钮输出“同 namespace 混合 / 分 namespace 串扰 0”。
+
+### 5. 涉及文件
+
+`src/logger.ts`（新）、`src/isolation.ts`（新）、`src/storage.ts`（schemaVersion getter）、`src/server.ts`（日志/三端点/请求日志/真实端口）、`src/doctor.ts`（剧本 6）、`src/mcp.ts` / `src/mcp-config.ts` / `src/server.ts` / `web/index.html`（版本 0.2.2）、`web/app.js` / `web/app.css`（Ops 页）、`web/index.html`（Ops 导航）、`test/logger.test.ts`（新）、`test/isolation.test.ts`（新）、`test/server.test.ts`、`README.md` / `README.en.md` / `DESIGN.md` / `llms.txt` / `CHANGELOG.md`。
+
+---
+
 ## v0.2.1 — 2026-11-19
 
 质量版：不加花活，先把"会咬人的地方"处理掉，再补一个本地优先刚需的备份能力。

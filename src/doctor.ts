@@ -1,10 +1,13 @@
 /**
  * Doctor 自检（DESIGN.md 第 8 节）——把"数字可复现"落成可执行脚本。
  *
- * 三套剧本，全部确定性（注入固定时钟 + 内存库 + 固定数据）：
+ * 六套剧本，全部确定性（注入固定时钟 + 内存库 + 固定数据）：
  *   1. 写入召回：N 条事实 + 干扰项 → 命中率
  *   2. 更新陈旧：写入→更新→按旧问法查询→应返回新值（对抗 stale retrieval）
  *   3. 跨会话：模拟进程重启（关库重开同一路径）→ 记忆仍在
+ *   4. 向量检索：离线向量命中
+ *   5. 图检索：关系问答 + 两跳
+ *   6. 多任务隔离：同 namespace 会串 / 分 namespace 不串
  *
  * 关键指标 contamination@k：top-k 里同时出现 current 与 stale 版本——
  * StaleBench 论文证明它比 current@k 更能正确评价策略（current@1 会把 13/42 策略排反）。
@@ -12,6 +15,7 @@
  * 输出 JSON（机器读）+ 人类可读文本，README 里的数字必须来自这里。
  */
 import { Membrane } from "./engine.js";
+import { probeTaskIsolation } from "./isolation.js";
 import { writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 
@@ -47,6 +51,15 @@ export interface DoctorReport {
       sentence: string;
       multiHopEdges: number;
       graphScoreApplied: boolean;
+      latencyMs: number;
+    };
+    isolation: {
+      sameNamespaceMixed: boolean;
+      sameNamespaceTasks: number;
+      taskAHits: number;
+      taskBHits: number;
+      leakage: number;
+      pass: boolean;
       latencyMs: number;
     };
   };
@@ -220,6 +233,21 @@ function scenarioCrossSession(path: string): DoctorReport["scenarios"]["crossSes
   return { recalled, recordCount: Math.min(before, after), latencyMs };
 }
 
+/** 剧本 6：多任务隔离（同 namespace 串 / 分 namespace 不串） */
+function scenarioIsolation(): DoctorReport["scenarios"]["isolation"] {
+  const t0 = Date.now();
+  const r = probeTaskIsolation();
+  return {
+    sameNamespaceMixed: r.sharedNamespace.mixed,
+    sameNamespaceTasks: r.sharedNamespace.tasks.length,
+    taskAHits: r.separatedNamespaces.taskA.hits,
+    taskBHits: r.separatedNamespaces.taskB.hits,
+    leakage: r.separatedNamespaces.leakage,
+    pass: r.separatedNamespaces.pass,
+    latencyMs: Date.now() - t0,
+  };
+}
+
 /** 生成报告（doctor 命令调用） */
 export function runDoctor(dbPath?: string): DoctorReport {
   const path = dbPath ?? join(process.cwd(), ".tmp-test", "doctor.db");
@@ -235,6 +263,7 @@ export function runDoctor(dbPath?: string): DoctorReport {
   const crossSession = scenarioCrossSession(path);
   const vector = scenarioVector();
   const graph = scenarioGraph();
+  const isolation = scenarioIsolation();
 
   const checks = [
     { name: "写入召回命中率 ≥ 80%", pass: writeRecall.hitRate >= 0.8, detail: `${(writeRecall.hitRate * 100).toFixed(0)}% (${writeRecall.hits}/${writeRecall.total})` },
@@ -244,12 +273,14 @@ export function runDoctor(dbPath?: string): DoctorReport {
     { name: "向量检索：写入带向量后能纯向量命中", pass: vector.recalledByVector && vector.rrfVecApplied, detail: `${vector.recalledByVector ? "hit" : "miss"} / rrfVec=${vector.rrfVecApplied ? ">0" : "0"}` },
     { name: "图检索：能回答关系问题", pass: graph.answered, detail: graph.answered ? `"${graph.sentence}"` : "未答出" },
     { name: "图检索：两跳可达 + 图路参与打分", pass: graph.multiHopEdges >= 2 && graph.graphScoreApplied, detail: `两跳 ${graph.multiHopEdges} 边 / rrfGraph ${graph.graphScoreApplied ? ">0" : "0"}` },
+    { name: "多任务隔离：不同 namespace 串扰 = 0", pass: isolation.pass, detail: `泄漏 ${isolation.leakage} 条 / A ${isolation.taskAHits} 条 / B ${isolation.taskBHits} 条` },
+    { name: "多任务串扰：同 namespace 混召回可复现", pass: isolation.sameNamespaceMixed, detail: isolation.sameNamespaceMixed ? `命中 ${isolation.sameNamespaceTasks} 个任务（风险成立）` : "未复现（请检查分词）" },
   ];
   return {
-    version: "0.2.1",
+    version: "0.2.2",
     generatedAt: new Date(T0).toISOString(),
     deterministic: true,
-    scenarios: { writeRecall, staleUpdate, crossSession, vector, graph },
+    scenarios: { writeRecall, staleUpdate, crossSession, vector, graph, isolation },
     summary: { passed: checks.every((c) => c.pass), checks },
   };
 }
@@ -287,6 +318,13 @@ export function formatDoctorReport(r: DoctorReport): string {
   lines.push(`  两跳可达    ${r.scenarios.graph.multiHopEdges} 条边`);
   lines.push(`  图路打分    ${r.scenarios.graph.graphScoreApplied ? "已参与 ✓" : "未参与 ✗"}`);
   lines.push(`  耗时        ${r.scenarios.graph.latencyMs} ms`);
+  lines.push("");
+  lines.push("【剧本 6 · 多任务隔离】");
+  lines.push(`  同 namespace ${r.scenarios.isolation.sameNamespaceMixed ? "会互相召回（风险成立）" : "未复现"} / ${r.scenarios.isolation.sameNamespaceTasks} 个任务`);
+  lines.push(`  任务A 独立    ${r.scenarios.isolation.taskAHits} 条`);
+  lines.push(`  任务B 独立    ${r.scenarios.isolation.taskBHits} 条`);
+  lines.push(`  串扰         ${r.scenarios.isolation.leakage} 条 ${r.scenarios.isolation.pass ? "✓" : "✗"}`);
+  lines.push(`  耗时         ${r.scenarios.isolation.latencyMs} ms`);
   lines.push("");
   lines.push("【验收检查】");
   for (const c of r.summary.checks) lines.push(`  ${c.pass ? "✓" : "✗"} ${c.name} — ${c.detail}`);

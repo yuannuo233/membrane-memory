@@ -4,7 +4,7 @@
 
 - Repository: https://github.com/yuannuo233/membrane-memory
 - Package: `membrane-memory`
-- Version: 0.2.1
+- Version: 0.2.2
 - License: MIT
 - Language: TypeScript, runs on Node.js >= 24 (node:sqlite is flag-gated below 24)
 
@@ -38,7 +38,7 @@ Membrane gives AI agents persistent memory with three differentiating properties
 - Entity typing is heuristic (suffix rules, surname list); wrong types never affect recall, only readability.
 - Multi-process concurrency: SQLite single-writer; concurrent writers wait up to 5s, then fail.
 - Only Chinese and English tokenization verified.
-- 201 tests, all authored by the maintainer; no independent third-party validation yet.
+- 210 tests, all authored by the maintainer; no independent third-party validation yet.
 - Default weights and half-lives are untuned heuristics.
 
 ## Install & quick start
@@ -55,14 +55,14 @@ membrane-memory import backup.json         # restore; idempotent, never overwrit
 ```
 
 Library: `import { Membrane } from "membrane-memory";`
-Methods: `add(input) -> AddResult`, `recall(options) -> RecallHit[]`, `forget(id)`, `get(id)`, `history(id)`, `list(options)`, `stats()`. v0.2 adds async variants `addAsync` / `recallAsync` / `backfillEmbeddings` (auto embeddings) and graph APIs `relations(a, b?, opts)`, `link(input)`, `listEntities(ns)`, `entitiesFor(memoryId)`. v0.2.1 adds `exportAll(opts)` / `importAll(bundle)` for full-fidelity JSON backups.
+Methods: `add(input) -> AddResult`, `recall(options) -> RecallHit[]`, `forget(id)`, `get(id)`, `history(id)`, `list(options)`, `stats()`. v0.2 adds async variants `addAsync` / `recallAsync` / `backfillEmbeddings` (auto embeddings) and graph APIs `relations(a, b?, opts)`, `link(input)`, `listEntities(ns)`, `entitiesFor(memoryId)`. v0.2.1 adds `exportAll(opts)` / `importAll(bundle)` for full-fidelity JSON backups. v0.2.2 adds `MemoryLogger` and `probeTaskIsolation()` for ops/isolation diagnostics.
 
 ## Interfaces
 
 - **SDK**: ESM + full TypeScript types (`.d.ts` shipped).
 - **CLI**: `add / search / relations / link / entities / embed-backfill / list / stats / export / import / mcp-config / mcp / serve / doctor`.
 - **MCP server**: `membrane-memory mcp` (stdio, 10 tools: membrane_add / recall / forget / get / history / list / evidence / stats / link / relations). Plug into any MCP client — WorkBuddy, zcode, Claude Code/Desktop, Cursor, Cline, Windsurf, Google Antigravity, AstrBot, etc.
-- **REST**: `membrane-memory serve` — mem0-compatible subset (`POST /v1/memories`, `POST /v1/memories/search`, `GET /v1/memories/{id}`) + native `/api/*` + web console on `127.0.0.1:8317`.
+- **REST**: `membrane-memory serve` — mem0-compatible subset (`POST /v1/memories`, `POST /v1/memories/search`, `GET /v1/memories/{id}`) + native `/api/*` + web console on `127.0.0.1:8317`. Ops endpoints: `GET /api/admin/diagnostics`, `GET /api/admin/logs`, `GET /api/admin/isolation-check` (read-only; logs never contain memory content or queries).
 
 ## Key facts (verifiable, run doctor yourself)
 
@@ -73,7 +73,8 @@ Methods: `add(input) -> AddResult`, `recall(options) -> RecallHit[]`, `forget(id
 - Fuzzy fallback uses an inverted index (`char_index` table), not a full scan: 2.9x faster on average, 10x faster for rare character combinations.
 - Storage writes wrap the base row and its full-text index in one reentrant transaction, so a crash cannot leave a record that exists but cannot be found.
 - Concurrency: `PRAGMA busy_timeout = 5000`; verified 8 processes × 100 writes with zero loss.
-- 201 tests, all passing (verified by GitHub Actions on every push).
+- 210 tests, all passing (verified by GitHub Actions on every push).
+- Multi-task isolation: `namespace` is a hard filter; **memories in the same namespace are recalled together** (task A and task B both become candidates), while different namespaces have zero leakage (doctor scenario 6 / `/api/admin/isolation-check`). Use `task-<id>` per task, plus a separate `shared` namespace. No automatic `task_id` field yet.
 
 ## Docs
 

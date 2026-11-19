@@ -14,6 +14,8 @@ import { join, extname, resolve, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Membrane, toBrief, toUltraBrief } from "./engine.js";
 import { MembraneError } from "./model.js";
+import { MemoryLogger, type LogLevel } from "./logger.js";
+import { probeTaskIsolation } from "./isolation.js";
 import {
   asBoolean,
   asEntityInputs,
@@ -33,6 +35,20 @@ export interface ServerOptions {
   token?: string;
   /** 静态资源目录（默认项目 web/） */
   webDir?: string;
+  /** 结构化运行日志；不传则自动落到 `<db>.log` */
+  logger?: MemoryLogger;
+  /** 日志文件路径覆盖（仅当未传 logger 时生效） */
+  logFile?: string;
+}
+
+/** 后台诊断/日志路由需要的运行时上下文（单测可直接省略） */
+export interface RouteContext {
+  logger?: MemoryLogger;
+  startedAt?: number;
+  host?: string;
+  port?: number;
+  tokenConfigured?: boolean;
+  version?: string;
 }
 
 type ApiResult = { status?: number; body: unknown };
@@ -129,6 +145,7 @@ export async function route(
   urlPath: string,
   body: Record<string, unknown>,
   webDir: string,
+  ctx: RouteContext = {},
 ): Promise<ApiResult> {
   // ---- Dashboard 静态资源 ----
   if (method === "GET" && (urlPath === "/" || urlPath === "/index.html")) {
@@ -155,8 +172,69 @@ export async function route(
   }
   if (method === "GET" && urlPath === "/api/health") {
     return {
-      body: { ok: true, service: "membrane-memory", version: "0.2.1", db: engine.storage.path },
+      body: { ok: true, service: "membrane-memory", version: "0.2.2", db: engine.storage.path },
     };
+  }
+  // ---- 运维后台（给懂的人看；不返回任何记忆正文） ----
+  if (method === "GET" && urlPath === "/api/admin/logs") {
+    const levelRaw = asString(body.level);
+    const level: LogLevel | undefined =
+      levelRaw === "info" || levelRaw === "warn" || levelRaw === "error" ? levelRaw : undefined;
+    const limit = Math.min(500, Math.max(1, asFiniteNumber(body.limit) ?? 100));
+    const entries = ctx.logger?.tail(limit, level) ?? [];
+    return {
+      status: 200,
+      body: {
+        entries,
+        count: entries.length,
+        logging: ctx.logger?.stats() ?? { path: null, buffered: 0, written: 0, dropped: 0, fileError: null },
+      },
+    };
+  }
+  if (method === "GET" && urlPath === "/api/admin/diagnostics") {
+    const stats = engine.stats();
+    const capabilities = {
+      llmConfigured: !!engine.llm,
+      extractionModel: engine.llm?.model ?? null,
+      embeddingConfigured: !!engine.llm?.embeddingModel,
+      embeddingModel: engine.llm?.embeddingModel ?? null,
+      graphEnabled: true,
+    };
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        service: "membrane-memory",
+        version: ctx.version ?? "0.2.2",
+        uptimeMs: ctx.startedAt === undefined ? null : Date.now() - ctx.startedAt,
+        pid: process.pid,
+        node: process.version,
+        platform: `${process.platform}/${process.arch}`,
+        memoryRssBytes: process.memoryUsage().rss,
+        db: { path: engine.storage.path, schemaVersion: engine.storage.schemaVersion, bytes: stats.dbBytes },
+        stats,
+        capabilities,
+        security: {
+          host: ctx.host ?? null,
+          port: ctx.port ?? null,
+          tokenConfigured: ctx.tokenConfigured ?? false,
+        },
+        logging: ctx.logger?.stats() ?? {
+          path: null,
+          buffered: 0,
+          written: 0,
+          dropped: 0,
+          fileError: null,
+          maxEntries: 0,
+        },
+      },
+    };
+  }
+  if (method === "GET" && urlPath === "/api/admin/isolation-check") {
+    // 只跑 :memory: 临时库，绝不碰用户数据；给后台/curl 一个"当场证明"按钮
+    const probe = probeTaskIsolation();
+    ctx.logger?.info("admin.isolation_probe", { pass: probe.separatedNamespaces.pass, mixed: probe.sharedNamespace.mixed });
+    return { status: 200, body: probe };
   }
   if (method === "GET" && urlPath === "/api/export") {
     // Dashboard 的"导出备份"按钮走这里；默认带向量，?noEmbeddings=1 可省
@@ -350,13 +428,35 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
   const defaultWebDir = resolve(here, "..", "web");
   const webDir = opts.webDir ?? process.env["MEMBRANE_WEB_DIR"] ?? defaultWebDir;
 
+  // 日志：默认落在库文件旁边（membrane.db.log），只记请求元数据，不记记忆正文。
+  // 内存库/测试可显式传 logger 或 logFile；`:memory:` 默认不落盘。
+  const logPath =
+    opts.logFile ??
+    process.env["MEMBRANE_LOG_FILE"] ??
+    (engine.storage.path === ":memory:" ? undefined : `${engine.storage.path}.log`);
+  const logger = opts.logger ?? new MemoryLogger({ path: logPath });
+  const ctx: RouteContext = {
+    logger,
+    startedAt: Date.now(),
+    host,
+    port,
+    tokenConfigured: !!token,
+    version: "0.2.2",
+  };
+
   const server = createServer((req, res) => {
+    const startedAt = Date.now();
+    const method = req.method ?? "GET";
+    const pathForLog = (req.url ?? "/").split("?")[0]!;
+    let status = 500;
     void (async () => {
       try {
         // token 校验（配了才要求）；用常量时间比较，避免时序侧信道
         if (token) {
           const auth = req.headers["authorization"];
           if (typeof auth !== "string" || !safeEqual(auth, `Bearer ${token}`)) {
+            status = 401;
+            logger.warn("http.auth_failed", { method, path: pathForLog });
             json(res, 401, { error: "Unauthorized" });
             return;
           }
@@ -367,7 +467,8 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
         // PATCH/PUT 也带 JSON body；之前只读 POST，导致真实 HTTP 编辑时内容被当成空对象
         const hasBody = req.method === "POST" || req.method === "PATCH" || req.method === "PUT";
         const body = hasBody ? await readBody(req) : query;
-        const result = await route(engine, req.method ?? "GET", u.pathname, body, webDir);
+        const result = await route(engine, req.method ?? "GET", u.pathname, body, webDir, ctx);
+        status = result.status ?? 200;
         const b = result.body as { __file?: string };
         if (b && typeof b === "object" && "__file" in b) {
           const file = b.__file!;
@@ -376,17 +477,38 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
           res.end(readFileSync(file));
           return;
         }
-        json(res, result.status ?? 200, result.body);
+        json(res, status, result.body);
       } catch (e) {
-        const status = e instanceof MembraneError && e.code.startsWith("E_") ? 400 : 500;
+        status = e instanceof MembraneError && e.code.startsWith("E_") ? 400 : 500;
+        logger.error("http.error", {
+          method,
+          path: pathForLog,
+          status,
+          code: e instanceof MembraneError ? e.code : "E_INTERNAL",
+        });
         json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      } finally {
+        // 只记 API 请求，静态资源不刷屏；query/body 一律不落日志
+        if (pathForLog.startsWith("/api/")) {
+          logger.info("http.request", {
+            method,
+            path: pathForLog,
+            status,
+            ms: Date.now() - startedAt,
+          });
+        }
       }
     })();
   });
 
   server.listen(port, host, () => {
-    console.log(`[membrane] REST + Dashboard 已启动：http://${host}:${port}`);
-    console.log(`[membrane] 健康检查：http://${host}:${port}/api/health`);
+    const addr = server.address();
+    const actualPort = addr && typeof addr === "object" ? addr.port : port;
+    ctx.port = actualPort;
+    logger.info("server.start", { host, port: actualPort, db: engine.storage.path, logFile: logger.path });
+    console.log(`[membrane] REST + Dashboard 已启动：http://${host}:${actualPort}`);
+    console.log(`[membrane] 健康检查：http://${host}:${actualPort}/api/health`);
+    console.log(`[membrane] 运维后台：http://${host}:${actualPort}/#ops（日志 ${logger.path ?? "memory only"}）`);
   });
   return server;
 }
