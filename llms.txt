@@ -4,7 +4,7 @@
 
 - Repository: https://github.com/yuannuo233/membrane-memory
 - Package: `membrane-memory`
-- Version: 0.2.5
+- Version: 0.2.6
 - License: MIT
 - Language: TypeScript, runs on Node.js >= 24 (node:sqlite is flag-gated below 24)
 

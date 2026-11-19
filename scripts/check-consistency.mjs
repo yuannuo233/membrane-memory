@@ -23,6 +23,10 @@ const DOCS = [
   'llms.txt',
   'why-membrane.md',
   '为什么用Membrane.md',
+  '安装说明.md',
+  '使用场景.md',
+  '适配配置/各工具接入配置.md',
+  '适配配置/REST与SDK接入.md',
 ];
 
 /** 从源码抓"事实" */
@@ -137,10 +141,32 @@ for (const doc of DOCS) {
     }
   });
 
-  // 6) 版本号（只查 badge / "version x.y.z" 形式，避免误伤历史记录）
-  for (const m of text.matchAll(/version[- ]?(0\.\d+\.\d+)/gi)) {
+  // 6) 版本号漂移
+  //
+  // 要覆盖三种写法，任一漏掉都会让旧版本号偷偷留下：
+  //   a. badge：version-0.2.6-blue
+  //   b. 纯文本：- Version: 0.2.5   /  v0.2.5
+  //   c. JSON 片段："version": "0.1.0"
+  //
+  // 排除历史性表述（"v0.2 新增"、"v0.2.1 质量版"）——那些是变更说明，本就该留在旧版本号上。
+  const versionPatterns = [
+    { re: /version[- ](0\.\d+\.\d+)/gi, label: 'badge' },
+    { re: /^-?\s*Version:\s*(0\.\d+\.\d+)/gim, label: 'Version:' },
+    { re: /"version":\s*"(0\.\d+\.\d+)"/g, label: 'JSON' },
+  ];
+  for (const { re, label } of versionPatterns) {
+    for (const m of text.matchAll(re)) {
+      if (m[1] !== FACT.version) {
+        problems.push(
+          `${doc}: ${label} 版本号写作 ${m[1]}，package.json 是 ${FACT.version}（"${m[0].trim()}"）`,
+        );
+      }
+    }
+  }
+  // 独立成行的 v0.2.x 标题式声明（如 DESIGN 里的 "当前版本 v0.2.5"）
+  for (const m of text.matchAll(/当前版本[：:\s]*v?(0\.\d+\.\d+)/g)) {
     if (m[1] !== FACT.version) {
-      problems.push(`${doc}: 版本号写作 ${m[1]}，package.json 是 ${FACT.version}`);
+      problems.push(`${doc}: "当前版本" 写作 ${m[1]}，package.json 是 ${FACT.version}`);
     }
   }
 }
