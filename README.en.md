@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 # Membrane 🧠
 
@@ -7,15 +7,23 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md)
+[![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.4-blue.svg)](CHANGELOG.md)
+[![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
+
+A long-term memory layer for AI agents / LLM memory / agent memory / chatbot memory.
+Zero runtime dependencies (only `ulid`), a single SQLite file, no telemetry, fully offline.
+Ships an MCP (Model Context Protocol) server — one process plugs into Claude Code, Cursor,
+Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hosted, privacy-first.
 
 </div>
 
 > Give your agent a memory that never forgets — and tells you **why** it recalled each item.
 > Works out of the box: no network, no model download, no API key, no native dependencies.
 
-> 🔴 **Honest disclosure (read this first)**: This is an early v0.1 project — solo-developed, 119 tests, **no real-world users yet**.
+> 🔴 **Honest disclosure (read this first)**: This is an early v0.1 project — solo-developed, 134 tests, **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
 > We do **not** chase "number one on benchmarks" — that is exactly how comparable projects fell from grace.
 

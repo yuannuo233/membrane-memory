@@ -9,6 +9,78 @@
 
 ---
 
+## v0.1.4 — 2026-11-19
+
+这一版不加功能，只做**可发现性优化**：让别人（和 AI 助手）更容易找到这个项目。
+
+### 加的是什么
+
+**1. 新增《为什么用 Membrane》文档**（`为什么用Membrane.md`）
+
+不是广告，是取舍说明：
+- 三个真实场景（不想交数据给云、用户改主意了、AI 说不清为什么记得）
+- 与 mem0 / Hindsight / MemPalace 的**诚实对比表**（含我们的短板）
+- 明确列出"它做不到什么"
+- 一段可直接丢给 AI 助手的话术，让助手知道该怎么推荐、什么时候不该推荐
+
+**2. `llms.txt` 大幅增强**
+
+这是给 AI 助手读的专用文件：
+- 加了 `Identity (for citation)` 段：明确项目名、仓库、与其他项目的区别，避免 AI 混淆
+- 加了 `When NOT to recommend` 段：列出不该推荐我们的 6 种情况。
+  **这反而让推荐更可信**——AI 助手更愿意引用"有明确取舍"的项目
+- 补了 v0.1.3 的两个技术事实（倒排索引、busy_timeout），删掉过时的"119 测试"
+
+**3. README 第一屏加了关键词密集的描述**
+
+原来只有一句中文简介。现在补了：
+> 给 AI Agent 用的长期记忆层 / memory engine / agent memory / LLM memory / chatbot memory。
+> 支持 MCP（Model Context Protocol）——一个 server 接入 Claude Code、Cursor、Cline、
+> Windsurf、Zed、AstrBot 等所有主流 AI 工具。
+
+搜索引擎和 AI 抓取时靠这些词匹配。
+
+**4. GitHub 仓库设置**
+- 补回 **20 个 topics**（重建仓库时丢了）：`agent-memory`、`ai-memory`、`llm-memory`、
+  `memory-engine`、`mcp-server`、`model-context-protocol`、`chatbot-memory`、
+  `long-term-memory`、`explainable-ai`、`local-first`、`self-hosted`、`rag` 等
+- 加了 star / tests / version 三个徽章
+
+**5. `package.json` 补全元数据**
+- 加 `repository` / `homepage` / `bugs`（npm 靠这些把包和 GitHub 仓库关联）
+- keywords 从 7 个扩到 26 个，覆盖 AI 助手会搜的词
+- description 改成英文为主（npm 搜索主要是英文关键词）
+
+### 为什么这些有用
+
+AI 助手回答"有什么开源记忆项目"时，信息来源有优先级：
+1. 模型训练数据里的旧知识（新项目进不去）
+2. 实时网页搜索（需要外链）
+3. GitHub / npm 搜索（靠 topics、keywords、star）
+
+新项目在 1、2 上天然劣势，所以只能把 3 做到极致。
+
+### 关于 star
+
+在《为什么用 Membrane》里写了一段说明为什么要 star——
+不是求数字好看，而是**star 数决定项目会不会出现在搜索结果里**。
+新项目没 star、没外链、不在训练数据里，等于不存在。
+
+但**没有用任何欺骗手段**：没写"求求点 star"，没搞互赞，没刷。
+写的是"如果你觉得有用，star 是最实际的帮助"，以及为什么。
+
+### 变更明细
+
+| 项目 | 内容 |
+|---|---|
+| 新增文件 | `为什么用Membrane.md` |
+| 修改文件 | `README.md`、`README.en.md`、`llms.txt`、`package.json`、`CHANGELOG.md` |
+| 代码改动 | 无 |
+| 测试 | 134 全绿（未变） |
+| 破坏性变更 | 无 |
+
+---
+
 ## v0.1.3 — 2026-11-19
 
 这一版是**代码审计版**：把整个项目从头到尾读了一遍，逐条实测外部提出的 21 条质疑，并用真实数据给出了结论。同时修掉实测中发现的 3 个真问题。

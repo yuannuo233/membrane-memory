@@ -1,9 +1,18 @@
-﻿{
+{
   "name": "membrane-memory",
-  "version": "0.1.3",
-  "description": "membrane = mem + brain，记忆脑：时间感知、本地优先、可解释的 Agent 记忆引擎",
+  "version": "0.1.4",
+  "description": "Temporal-aware, local-first, explainable memory engine for AI agents. Zero dependencies, single SQLite file, MCP server included.",
   "type": "module",
   "license": "MIT",
+  "author": "yuannuo233",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuannuo233/membrane-memory.git"
+  },
+  "homepage": "https://github.com/yuannuo233/membrane-memory#readme",
+  "bugs": {
+    "url": "https://github.com/yuannuo233/membrane-memory/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -24,6 +33,7 @@
     "llms.txt",
     "DESIGN.md",
     "CHANGELOG.md",
+    "为什么用Membrane.md",
     "LICENSE"
   ],
   "engines": {
@@ -36,13 +46,32 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "agent",
-    "memory",
+    "agent-memory",
+    "ai-memory",
+    "llm-memory",
+    "memory-engine",
+    "long-term-memory",
+    "chatbot-memory",
     "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "ai-agents",
+    "agent",
     "sqlite",
     "temporal",
     "local-first",
-    "explainable"
+    "offline",
+    "privacy",
+    "self-hosted",
+    "explainable",
+    "explainable-ai",
+    "rag",
+    "memory",
+    "claude",
+    "cursor",
+    "cline",
+    "zero-dependency",
+    "typescript"
   ],
   "dependencies": {
     "ulid": "^3.0.2"

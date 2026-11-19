@@ -270,7 +270,7 @@ export async function handleLine(engine: Membrane, line: string): Promise<string
     return send({
       protocolVersion: requested || "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "membrane-memory", version: "0.1.3" },
+      serverInfo: { name: "membrane-memory", version: "0.1.4" },
       instructions:
         "Membrane 记忆脑：用 membrane_add 记住事实，用 membrane_recall 按语义召回并查看 why 理由，用 membrane_forget 遗忘。",
     });
