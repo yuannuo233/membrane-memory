@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Membrane · Memory Engine Console</title>
+<title>Membrane · 记忆引擎控制台</title>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -14,155 +14,181 @@
       <div class="brand-mark">M</div>
       <div>
         <div class="brand-name">Membrane</div>
-        <div class="brand-sub">MEMORY ENGINE</div>
+        <div class="brand-sub" data-i18n="brand.sub">记忆引擎</div>
       </div>
     </div>
     <nav class="nav">
-      <button class="nav-item active" data-view="overview"><span class="nav-ico">◫</span>Overview</button>
-      <button class="nav-item" data-view="ingest"><span class="nav-ico">＋</span>Ingest</button>
-      <button class="nav-item" data-view="recall"><span class="nav-ico">⌕</span>Recall</button>
-      <button class="nav-item" data-view="ledger"><span class="nav-ico">≡</span>Ledger</button>
-      <button class="nav-item" data-view="audit"><span class="nav-ico">◷</span>Audit Trail</button>
-      <button class="nav-item" data-view="ops"><span class="nav-ico">▤</span>Ops / Admin</button>
+      <button class="nav-item active" data-view="overview"><span class="nav-ico">◫</span><span data-i18n="nav.overview">概览</span></button>
+      <button class="nav-item" data-view="ingest"><span class="nav-ico">＋</span><span data-i18n="nav.ingest">写入记忆</span></button>
+      <button class="nav-item" data-view="recall"><span class="nav-ico">⌕</span><span data-i18n="nav.recall">召回</span></button>
+      <button class="nav-item" data-view="ledger"><span class="nav-ico">≡</span><span data-i18n="nav.ledger">记忆台账</span></button>
+      <button class="nav-item" data-view="audit"><span class="nav-ico">◷</span><span data-i18n="nav.audit">审计链</span></button>
+      <button class="nav-item" data-view="ops"><span class="nav-ico">▤</span><span data-i18n="nav.ops">运维后台</span></button>
     </nav>
     <div class="sidebar-foot">
       <div class="status-dot"></div>
       <div style="flex:1">
-        <div class="status-title">Engine Online</div>
-        <div class="status-sub" id="db-path">local://membrane.db</div>
+        <div class="status-title" data-i18n="status.online">引擎在线</div>
+        <div class="status-sub" id="db-path" data-i18n="status.dbFallback">本地数据库</div>
       </div>
     </div>
-    <button class="btn ghost export-btn" id="btn-export">↓ Export backup</button>
+    <button class="btn ghost export-btn" id="btn-export" data-i18n="export.backup">↓ 导出备份</button>
   </aside>
 
   <!-- 主内容 -->
   <main class="main">
     <header class="topbar">
       <div>
-        <div class="eyebrow">TEMPORAL · LOCAL-FIRST · EXPLAINABLE</div>
-        <h1 id="view-title">Overview</h1>
+        <div class="eyebrow" data-i18n="eyebrow">时间感知 · 本地优先 · 可解释</div>
+        <h1 id="view-title">概览</h1>
       </div>
       <div class="topbar-meta">
-        <div class="mode-switch" id="mode-switch" title="控制召回返回的详细度：越省 token，返回字段越少">
-          <button data-mode="ultra">省 Token</button>
-          <button data-mode="brief" class="active">平衡</button>
-          <button data-mode="full">完整</button>
+        <div class="lang-switch" id="lang-switch" title="Language / 语言">
+          <button data-lang="zh">中文</button>
+          <button data-lang="en">EN</button>
+        </div>
+        <div class="mode-switch" id="mode-switch" data-i18n-title="mode.title" title="控制召回返回的详细度：越省 Token，返回字段越少">
+          <button data-mode="ultra" data-i18n="mode.ultra">省 Token</button>
+          <button data-mode="brief" class="active" data-i18n="mode.brief">平衡</button>
+          <button data-mode="full" data-i18n="mode.full">完整</button>
         </div>
         <span class="chip" id="version-chip">v0.2.2</span>
-        <span class="chip chip-ghost" id="health-chip">● healthy</span>
+        <span class="chip chip-ghost" id="health-chip" data-i18n="health.ok">● 运行正常</span>
       </div>
     </header>
 
-    <!-- Overview -->
+    <!-- 概览 -->
     <section class="view" id="view-overview">
       <div class="stat-grid six">
-        <div class="stat-card"><div class="stat-label">TOTAL RECORDS</div><div class="stat-value" id="s-total">—</div><div class="stat-hint">all revisions</div></div>
-        <div class="stat-card"><div class="stat-label">ACTIVE</div><div class="stat-value accent" id="s-current">—</div><div class="stat-hint">valid_to = NULL</div></div>
-        <div class="stat-card"><div class="stat-label">SUPERSEDED</div><div class="stat-value" id="s-superseded">—</div><div class="stat-hint">replaced versions</div></div>
-        <div class="stat-card"><div class="stat-label">TOMBSTONES</div><div class="stat-value" id="s-deleted">—</div><div class="stat-hint">soft-deleted</div></div>
-        <div class="stat-card"><div class="stat-label">ENTITIES</div><div class="stat-value" id="s-entities">—</div><div class="stat-hint">graph nodes</div></div>
-        <div class="stat-card"><div class="stat-label">RELATIONS</div><div class="stat-value" id="s-relations">—</div><div class="stat-hint">graph edges</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="overview.total">总记录</div><div class="stat-value" id="s-total">—</div><div class="stat-hint" data-i18n="overview.totalHint">含历史版本</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="overview.current">现行有效</div><div class="stat-value accent" id="s-current">—</div><div class="stat-hint">valid_to = NULL</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="overview.superseded">已取代</div><div class="stat-value" id="s-superseded">—</div><div class="stat-hint" data-i18n="overview.supersededHint">被新版本取代</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="overview.deleted">已遗忘</div><div class="stat-value" id="s-deleted">—</div><div class="stat-hint" data-i18n="overview.deletedHint">软删除，保留底稿</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="overview.entities">实体</div><div class="stat-value" id="s-entities">—</div><div class="stat-hint" data-i18n="overview.entitiesHint">图节点</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="overview.relations">关系</div><div class="stat-value" id="s-relations">—</div><div class="stat-hint" data-i18n="overview.relationsHint">图边</div></div>
       </div>
       <div class="panel">
-        <div class="panel-head"><h2>Distribution by Kind</h2><span class="panel-sub">memory taxonomy</span></div>
+        <div class="panel-head"><h2 data-i18n="overview.kindDist">按类型分布</h2><span class="panel-sub" data-i18n="overview.kindSub">记忆类型</span></div>
         <div class="kind-bars" id="kind-bars"></div>
       </div>
       <div class="panel">
-        <div class="panel-head"><h2>Engine Signature</h2><span class="panel-sub">differentiators</span></div>
+        <div class="panel-head"><h2 data-i18n="overview.features">引擎特性</h2><span class="panel-sub" data-i18n="overview.featuresSub">差异化能力</span></div>
         <div class="feature-grid">
-          <div class="feature"><div class="feature-k">Bi-temporal Model</div><div class="feature-v">valid_from / valid_to / superseded_by</div></div>
-          <div class="feature"><div class="feature-k">Explainable Recall</div><div class="feature-v">RRF fusion · 5-component score breakdown · why</div></div>
-          <div class="feature"><div class="feature-k">Zero Dependency</div><div class="feature-v">node:sqlite · no telemetry · single file</div></div>
-          <div class="feature"><div class="feature-k">Token Modes</div><div class="feature-v">ultra / brief / full — pick per workflow</div></div>
+          <div class="feature"><div class="feature-k" data-i18n="feature.bitemporal">双时间模型</div><div class="feature-v">valid_from / valid_to / superseded_by</div></div>
+          <div class="feature"><div class="feature-k" data-i18n="feature.explain">可解释召回</div><div class="feature-v" data-i18n="feature.explainValue">RRF 融合 · 五分量打分 · why</div></div>
+          <div class="feature"><div class="feature-k" data-i18n="feature.zero">零依赖</div><div class="feature-v" data-i18n="feature.zeroValue">node:sqlite · 无遥测 · 单文件</div></div>
+          <div class="feature"><div class="feature-k" data-i18n="feature.modes">Token 三模式</div><div class="feature-v" data-i18n="feature.modesValue">省 Token / 平衡 / 完整 —— 按场景选</div></div>
         </div>
       </div>
     </section>
 
-    <!-- Ingest -->
+    <!-- 写入 -->
     <section class="view hidden" id="view-ingest">
       <div class="panel">
-        <div class="panel-head"><h2>Ingest Pipeline</h2><span class="panel-sub">deduplicate → conflict detection → commit</span></div>
-        <div class="form-row"><label>Content</label><textarea id="in-content" rows="3" placeholder="e.g. 用户住在上海"></textarea></div>
+        <div class="panel-head"><h2 data-i18n="ingest.title">写入流程</h2><span class="panel-sub" data-i18n="ingest.sub">去重 → 冲突检测 → 提交</span></div>
+        <div class="form-row"><label data-i18n="ingest.content">正文</label><textarea id="in-content" rows="3" data-i18n-ph="ingest.contentPh" placeholder="例如：用户住在上海"></textarea></div>
         <div class="form-grid">
-          <div class="form-row"><label>Kind</label><select id="in-kind"><option>fact</option><option>episode</option><option>preference</option><option>procedure</option></select></div>
-          <div class="form-row"><label>Subject</label><input id="in-subject" placeholder="用户"></div>
-          <div class="form-row"><label>Namespace</label><input id="in-namespace" placeholder="default"></div>
-          <div class="form-row"><label>Confidence</label><input id="in-conf" type="number" min="0" max="1" step="0.1" value="1"></div>
-          <div class="form-row"><label>Tags (comma)</label><input id="in-tags" placeholder="住址, 城市"></div>
+          <div class="form-row"><label data-i18n="ingest.kind">类型（Kind）</label><select id="in-kind"><option value="fact" data-i18n="kind.fact">事实</option><option value="episode" data-i18n="kind.episode">情景</option><option value="preference" data-i18n="kind.preference">偏好</option><option value="procedure" data-i18n="kind.procedure">流程</option></select></div>
+          <div class="form-row"><label data-i18n="ingest.subject">主语（Subject）</label><input id="in-subject" data-i18n-ph="ingest.subjectPh" placeholder="用户"></div>
+          <div class="form-row"><label data-i18n="ingest.namespace">命名空间（namespace）</label><input id="in-namespace" data-i18n-ph="ingest.namespacePh" placeholder="default"></div>
+          <div class="form-row"><label data-i18n="ingest.confidence">置信度</label><input id="in-conf" type="number" min="0" max="1" step="0.1" value="1"></div>
+          <div class="form-row"><label data-i18n="ingest.tags">标签（逗号分隔）</label><input id="in-tags" data-i18n-ph="ingest.tagsPh" placeholder="住址, 城市"></div>
         </div>
-        <div class="form-actions"><label class="checkbox"><input type="checkbox" id="in-pin"> Pin (exempt from auto-supersede)</label><button class="btn primary" id="btn-ingest">Commit Memory</button></div>
+        <div class="form-actions"><label class="checkbox"><input type="checkbox" id="in-pin"> <span data-i18n="ingest.pin">钉选（不自动取代）</span></label><button class="btn primary" id="btn-ingest" data-i18n="ingest.commit">写入记忆</button></div>
         <div class="result-box hidden" id="ingest-result"></div>
       </div>
     </section>
 
-    <!-- Recall -->
+    <!-- 召回 -->
     <section class="view hidden" id="view-recall">
       <div class="panel">
-        <div class="panel-head"><h2>Hybrid Recall</h2><span class="panel-sub" id="recall-mode-hint">FTS5 BM25 + RRF + temporal decay · 平衡模式</span></div>
-        <div class="recall-bar"><input id="rc-query" placeholder="输入查询，例如：用户住在哪"><button class="btn primary" id="btn-recall">Search</button></div>
+        <div class="panel-head"><h2 data-i18n="recall.title">混合召回</h2><span class="panel-sub" id="recall-mode-hint">FTS5 BM25 + RRF + 时间衰减 · 平衡模式</span></div>
+        <div class="recall-bar"><input id="rc-query" data-i18n-ph="recall.queryPh" placeholder="输入查询，例如：用户住在哪"><button class="btn primary" id="btn-recall" data-i18n="recall.search">召回</button></div>
         <div class="recall-opts">
-          <label>Filter kind <select id="rc-kind"><option value="">all</option><option>fact</option><option>episode</option><option>preference</option><option>procedure</option></select></label>
-          <label>Namespace <input id="rc-namespace" placeholder="default"></label>
-          <label>Limit <input id="rc-limit" type="number" value="8" min="1" max="50"></label>
-          <label class="checkbox"><input type="checkbox" id="rc-asof-toggle"> asOf (historical snapshot)</label>
-          <label class="hidden" id="rc-asof-wrap"><input id="rc-asof" type="number" placeholder="unix ms"></label>
+          <label><span data-i18n="recall.kind">筛选类型</span> <select id="rc-kind"><option value="" data-i18n="kind.all">全部</option><option value="fact" data-i18n="kind.fact">事实</option><option value="episode" data-i18n="kind.episode">情景</option><option value="preference" data-i18n="kind.preference">偏好</option><option value="procedure" data-i18n="kind.procedure">流程</option></select></label>
+          <label><span data-i18n="recall.namespace">命名空间</span> <input id="rc-namespace" data-i18n-ph="recall.namespacePh" placeholder="default"></label>
+          <label><span data-i18n="recall.limit">返回条数</span> <input id="rc-limit" type="number" value="8" min="1" max="50"></label>
+          <label class="checkbox"><input type="checkbox" id="rc-asof-toggle"> <span data-i18n="recall.asof">asOf（历史时点）</span></label>
+          <label class="hidden" id="rc-asof-wrap"><input id="rc-asof" type="number" data-i18n-ph="recall.asofPh" placeholder="Unix 毫秒"></label>
         </div>
         <div id="recall-results"></div>
       </div>
     </section>
 
-    <!-- Ledger -->
+    <!-- 台账 -->
     <section class="view hidden" id="view-ledger">
       <div class="panel">
         <div class="panel-head">
-          <h2>Memory Ledger</h2>
+          <h2 data-i18n="ledger.title">记忆台账</h2>
           <span class="panel-sub ledger-tools">
-            <input id="ld-namespace" placeholder="namespace" class="mini-input">
+            <input id="ld-namespace" data-i18n-ph="ledger.namespacePh" placeholder="命名空间" class="mini-input">
             <select id="ld-kind" class="mini-select">
-              <option value="">all kinds</option><option>fact</option><option>episode</option><option>preference</option><option>procedure</option>
+              <option value="" data-i18n="kind.allKinds">全部类型</option><option value="fact" data-i18n="kind.fact">事实</option><option value="episode" data-i18n="kind.episode">情景</option><option value="preference" data-i18n="kind.preference">偏好</option><option value="procedure" data-i18n="kind.procedure">流程</option>
             </select>
-            <label class="checkbox inline"><input type="checkbox" id="ld-all"> include superseded &amp; tombstones</label>
-            <button class="btn small" id="btn-ld-refresh">Refresh</button>
+            <label class="checkbox inline"><input type="checkbox" id="ld-all"> <span data-i18n="ledger.includeAll">包含已取代与已遗忘</span></label>
+            <button class="btn small" id="btn-ld-refresh" data-i18n="ledger.refresh">刷新</button>
           </span>
         </div>
-        <div class="table-wrap"><table id="ledger-table"><thead><tr><th>ULID</th><th>Kind</th><th>Content</th><th>Subject</th><th>Conf</th><th>Valid From</th><th>Status</th><th>Actions</th></tr></thead><tbody></tbody></table></div>
+        <div class="table-wrap"><table id="ledger-table"><thead><tr><th data-i18n="ledger.thId">ULID</th><th data-i18n="ledger.thKind">类型</th><th data-i18n="ledger.thContent">正文</th><th data-i18n="ledger.thSubject">主语</th><th data-i18n="ledger.thConfidence">置信度</th><th data-i18n="ledger.thValidFrom">生效时间</th><th data-i18n="ledger.thStatus">状态</th><th data-i18n="ledger.thActions">操作</th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
-    <!-- Audit -->
+    <!-- 审计链 -->
     <section class="view hidden" id="view-audit">
       <div class="panel">
-        <div class="panel-head"><h2>Audit Trail</h2><span class="panel-sub">immutable operation log · supersession chain</span></div>
-        <div class="form-row inline-form"><label>Memory ID</label><input id="au-id" placeholder="paste a ULID from the ledger"><button class="btn" id="btn-audit">Trace</button></div>
+        <div class="panel-head"><h2 data-i18n="audit.title">审计链</h2><span class="panel-sub" data-i18n="audit.sub">不可篡改的操作日志 · 取代链</span></div>
+        <div class="form-row inline-form"><label data-i18n="audit.id">记忆 ID</label><input id="au-id" data-i18n-ph="audit.idPh" placeholder="从台账粘贴一个 ULID"><button class="btn" id="btn-audit" data-i18n="audit.trace">追踪</button></div>
         <div id="audit-results"></div>
       </div>
     </section>
 
-    <!-- Ops / Admin -->
+    <!-- 运维后台 -->
     <section class="view hidden" id="view-ops">
       <div class="panel">
-        <div class="panel-head"><h2>Runtime Diagnostics</h2><span class="panel-sub">服务状态 · 不读取记忆正文</span></div>
-        <div class="diag-grid" id="ops-diag"><div class="empty">loading…</div></div>
+        <div class="panel-head"><h2 data-i18n="ops.runtime">运行诊断</h2><span class="panel-sub" data-i18n="ops.runtimeSub">服务状态 · 不读取记忆正文</span></div>
+        <div class="diag-grid" id="ops-diag"><div class="empty" data-i18n="common.loading">加载中…</div></div>
       </div>
 
       <div class="panel">
         <div class="panel-head">
-          <h2>Request Log</h2>
+          <h2 data-i18n="ops.mcpTitle">MCP 接入</h2>
+          <span class="panel-sub" data-i18n="ops.mcpSub">哪个 AI Agent 正在通过 MCP 使用这个记忆库</span>
+          <button class="btn small" id="btn-mcp-refresh" data-i18n="ops.refresh">刷新</button>
+        </div>
+        <div class="table-wrap">
+          <table id="mcp-table">
+            <thead><tr>
+              <th data-i18n="ops.thMcpStatus">状态</th>
+              <th data-i18n="ops.thMcpClient">AI Agent</th>
+              <th data-i18n="ops.thMcpVersion">版本</th>
+              <th data-i18n="ops.thMcpProtocol">协议</th>
+              <th data-i18n="ops.thMcpPid">PID</th>
+              <th data-i18n="ops.thMcpCalls">调用</th>
+              <th data-i18n="ops.thMcpLastTool">最后工具</th>
+              <th data-i18n="ops.thMcpLastSeen">最后活动</th>
+            </tr></thead>
+            <tbody><tr><td colspan="8" class="empty" data-i18n="common.loading">加载中…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="hint" style="margin-top:10px" id="mcp-meta"></div>
+      </div>
+
+      <div class="panel">
           <span class="ledger-tools">
             <select id="log-level" class="mini-select">
-              <option value="">all levels</option>
-              <option value="info">info+</option>
-              <option value="warn">warn+</option>
-              <option value="error">error</option>
+              <option value="" data-i18n="ops.allLevels">全部级别</option>
+              <option value="info" data-i18n="ops.infoPlus">info 及以上</option>
+              <option value="warn" data-i18n="ops.warnPlus">warn 及以上</option>
+              <option value="error" data-i18n="ops.errorOnly">仅 error</option>
             </select>
             <input id="log-limit" class="mini-input" type="number" min="1" max="500" value="100">
-            <label class="checkbox inline"><input type="checkbox" id="log-auto"> auto refresh (5s)</label>
-            <button class="btn small" id="btn-log-refresh">Refresh</button>
+            <label class="checkbox inline"><input type="checkbox" id="log-auto"> <span data-i18n="ops.autoRefresh">自动刷新（5 秒）</span></label>
+            <button class="btn small" id="btn-log-refresh" data-i18n="ops.refresh">刷新</button>
           </span>
         </div>
         <div class="table-wrap">
           <table id="log-table">
-            <thead><tr><th>Time</th><th>Level</th><th>Event</th><th>Method</th><th>Path</th><th>Status</th><th>ms</th><th>Detail</th></tr></thead>
+            <thead><tr><th data-i18n="ops.thTime">时间</th><th data-i18n="ops.thLevel">级别</th><th data-i18n="ops.thEvent">事件</th><th data-i18n="ops.thMethod">方法</th><th data-i18n="ops.thPath">路径</th><th data-i18n="ops.thStatus">状态码</th><th data-i18n="ops.thMs">耗时 (ms)</th><th data-i18n="ops.thDetail">详情</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -170,11 +196,11 @@
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h2>Multi-task Isolation</h2><span class="panel-sub">同一 Agent 多任务，记忆到底会不会串？</span></div>
-        <div id="ops-isolation"><div class="empty">run the probe to see</div></div>
+        <div class="panel-head"><h2 data-i18n="ops.isolation">多任务隔离</h2><span class="panel-sub" data-i18n="ops.isolationSub">同一 Agent 多任务，记忆到底会不会串？</span></div>
+        <div id="ops-isolation"><div class="empty" data-i18n="ops.isoEmpty">点击下方按钮运行检测</div></div>
         <div class="form-actions" style="margin-top:12px">
-          <button class="btn primary" id="btn-isolation">Run isolation probe</button>
-          <span class="hint">只使用临时内存库，不读写你的数据。</span>
+          <button class="btn primary" id="btn-isolation" data-i18n="ops.runProbe">运行隔离检测</button>
+          <span class="hint" data-i18n="ops.isoHint">只使用临时内存库，不读写你的数据。</span>
         </div>
       </div>
     </section>
@@ -185,14 +211,14 @@
 <div class="modal hidden" id="detail-modal">
   <div class="modal-card">
     <div class="modal-head">
-      <h2>Memory Detail</h2>
+      <h2 data-i18n="detail.title">记忆详情</h2>
       <button class="icon-btn" data-close="detail-modal">×</button>
     </div>
     <div class="modal-body" id="detail-body"></div>
     <div class="modal-foot">
-      <button class="btn" id="btn-detail-copy">Copy id</button>
-      <button class="btn" id="btn-detail-edit">Edit</button>
-      <button class="btn danger" id="btn-detail-forget">Forget</button>
+      <button class="btn" id="btn-detail-copy" data-i18n="detail.copy">复制 ID</button>
+      <button class="btn" id="btn-detail-edit" data-i18n="detail.edit">编辑</button>
+      <button class="btn danger" id="btn-detail-forget" data-i18n="detail.forget">遗忘</button>
     </div>
   </div>
 </div>
@@ -201,23 +227,23 @@
 <div class="modal hidden" id="edit-modal">
   <div class="modal-card">
     <div class="modal-head">
-      <h2>Edit Memory</h2>
+      <h2 data-i18n="edit.title">编辑记忆</h2>
       <button class="icon-btn" data-close="edit-modal">×</button>
     </div>
     <div class="modal-body">
-      <div class="form-row"><label>Content</label><textarea id="ed-content" rows="4"></textarea></div>
+      <div class="form-row"><label data-i18n="edit.content">正文</label><textarea id="ed-content" rows="4"></textarea></div>
       <div class="form-grid">
-        <div class="form-row"><label>Kind</label><select id="ed-kind"><option>fact</option><option>episode</option><option>preference</option><option>procedure</option></select></div>
-        <div class="form-row"><label>Subject</label><input id="ed-subject"></div>
-        <div class="form-row"><label>Confidence</label><input id="ed-conf" type="number" min="0" max="1" step="0.1"></div>
-        <div class="form-row"><label>Tags (comma)</label><input id="ed-tags"></div>
+        <div class="form-row"><label data-i18n="edit.kind">类型（Kind）</label><select id="ed-kind"><option value="fact" data-i18n="kind.fact">事实</option><option value="episode" data-i18n="kind.episode">情景</option><option value="preference" data-i18n="kind.preference">偏好</option><option value="procedure" data-i18n="kind.procedure">流程</option></select></div>
+        <div class="form-row"><label data-i18n="edit.subject">主语（Subject）</label><input id="ed-subject"></div>
+        <div class="form-row"><label data-i18n="edit.confidence">置信度</label><input id="ed-conf" type="number" min="0" max="1" step="0.1"></div>
+        <div class="form-row"><label data-i18n="edit.tags">标签（逗号分隔）</label><input id="ed-tags"></div>
       </div>
-      <div class="form-actions"><label class="checkbox"><input type="checkbox" id="ed-pin"> Pin</label><span class="hint">保存会创建新版本，旧版本保留在历史里。</span></div>
+      <div class="form-actions"><label class="checkbox"><input type="checkbox" id="ed-pin"> <span data-i18n="edit.pin">钉选</span></label><span class="hint" data-i18n="edit.hint">保存会创建新版本，旧版本保留在历史里。</span></div>
       <div class="result-box hidden" id="edit-result"></div>
     </div>
     <div class="modal-foot">
-      <button class="btn" data-close="edit-modal">Cancel</button>
-      <button class="btn primary" id="btn-edit-save">Save new version</button>
+      <button class="btn" data-close="edit-modal" data-i18n="edit.cancel">取消</button>
+      <button class="btn primary" id="btn-edit-save" data-i18n="edit.save">保存新版本</button>
     </div>
   </div>
 </div>

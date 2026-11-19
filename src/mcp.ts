@@ -10,6 +10,7 @@
  */
 import { Membrane, toBrief, toUltraBrief } from "./engine.js";
 import { llmFromEnv } from "./llm.js";
+import { randomUUID } from "node:crypto";
 import {
   asBoolean as bool,
   asEntityInputs as entityInputs,
@@ -356,8 +357,9 @@ async function callTool(
   }
 }
 
-/** 启动 MCP server（stdio）。返回引擎实例，便于测试关闭。 */
+/** 启动 MCP server（stdio），每个进程生成一个会话 id 用于登记客户端。 */
 export function startMcpServer(engine: Membrane): void {
+  const sessionId = randomUUID();
   let buf = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => {
@@ -367,22 +369,51 @@ export function startMcpServer(engine: Membrane): void {
       const line = buf.slice(0, idx).trim();
       buf = buf.slice(idx + 1);
       if (line) {
-        void handleLine(engine, line).then((out) => {
-          if (out !== null) process.stdout.write(out + "\n");
-        });
+        void handleLine(engine, line, sessionId)
+          .then((out) => {
+            if (out !== null) process.stdout.write(out + "\n");
+          })
+          .catch((e) => {
+            // 兜底：任何未捕获异常只上 stderr，绝不杀死 stdio 协议进程
+            console.error("[membrane-mcp] handler error:", e);
+          });
       }
     }
   });
 
-  process.on("SIGINT", () => {
+  const closeSession = (): void => {
+    try {
+      engine.storage.closeMcpClient(sessionId);
+    } catch {
+      // 进程退出阶段数据库可能已关闭，忽略即可；last_seen 超时仍会兜底
+    }
+  };
+  process.once("SIGINT", () => {
+    closeSession();
+    engine.close();
+    process.exit(0);
+  });
+  process.once("SIGTERM", () => {
+    closeSession();
+    engine.close();
+    process.exit(0);
+  });
+  process.on("exit", closeSession);
+  // 客户端关闭 stdin（正常断开）也要落 closed，而不是等 5 分钟超时
+  process.stdin.on("end", () => {
+    closeSession();
     engine.close();
     process.exit(0);
   });
   console.error("[membrane-mcp] started, db=" + engine.storage.path);
 }
 
-/** 处理一行 JSON-RPC（导出以便单测直接喂报文） */
-export async function handleLine(engine: Membrane, line: string): Promise<string | null> {
+/** 处理一行 JSON-RPC（导出以便单测直接喂报文）。sessionId 用于登记客户端。 */
+export async function handleLine(
+  engine: Membrane,
+  line: string,
+  sessionId?: string,
+): Promise<string | null> {
   let msg: JsonRpcRequest;
   try {
     msg = JSON.parse(line) as JsonRpcRequest;
@@ -394,9 +425,31 @@ export async function handleLine(engine: Membrane, line: string): Promise<string
     JSON.stringify({ jsonrpc: "2.0", id: id ?? null, result });
 
   if (method === "initialize") {
-    const requested = (msg.params as { protocolVersion?: string } | undefined)?.protocolVersion;
+    const params = msg.params as
+      | { protocolVersion?: string; clientInfo?: { name?: string; version?: string } }
+      | undefined;
+    const requested = params?.protocolVersion;
+    const clientInfo = params?.clientInfo;
+    const protocolVersion = requested || "2024-11-05";
+    // 登记是可观测性功能，best-effort：写库失败（磁盘满/锁超时）绝不能拖垮协议响应
+    if (sessionId) {
+      try {
+        engine.storage.recordMcpClient({
+          sessionId,
+          clientName: str(clientInfo?.name),
+          clientVersion: str(clientInfo?.version),
+          protocolVersion,
+          transport: "stdio",
+          pid: process.pid,
+          cwd: process.cwd(),
+          startedAt: Date.now(),
+        });
+      } catch (e) {
+        console.error("[membrane-mcp] client registry write failed:", e);
+      }
+    }
     return send({
-      protocolVersion: requested || "2024-11-05",
+      protocolVersion,
       capabilities: { tools: {} },
       serverInfo: { name: "membrane-memory", version: "0.2.2" },
       instructions:
@@ -409,6 +462,14 @@ export async function handleLine(engine: Membrane, line: string): Promise<string
   if (method === "tools/call") {
     const params = (msg.params ?? {}) as { name?: string; arguments?: Record<string, unknown> };
     const name = params.name ?? "";
+    // 同上：调用计数 best-effort，失败不影响工具结果
+    if (sessionId) {
+      try {
+        engine.storage.touchMcpClient(sessionId, name);
+      } catch {
+        /* 计数失败可容忍 */
+      }
+    }
     try {
       const result = await callTool(engine, name, params.arguments);
       return send(result);

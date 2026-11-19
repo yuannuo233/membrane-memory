@@ -23,7 +23,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 > Give your agent a memory that never forgets — and tells you **why** it recalled each item.
 > Works out of the box: no network, no model download, no API key, no native dependencies.
 
-> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 210 tests (verified live by CI), **no real-world users yet**.
+> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 212 tests (verified live by CI), **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
 > We do **not** chase "number one on benchmarks" — that is exactly how comparable projects fell from grace.
 
@@ -48,7 +48,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Item | Current state | Risk |
 |---|---|---|
-| **No real-world users yet** | All 210 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
+| **No real-world users yet** | All 212 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
 | **Tasks share memory within one namespace** | Only `namespace` isolation; no automatic `task_id`; task memories in one namespace become candidates together | Use `task-<id>` per task, see the isolation section above |
 | **Cross-process concurrency = WAL only** | SQLite single-writer; concurrent writers queue | Fine for personal use; a bottleneck under load |
 | **Performance tested only to 1,000 records** | Writes/queries in seconds at 1k | 100k+ not stress-tested |
@@ -157,7 +157,7 @@ Start the MCP server with `membrane-memory mcp`, then add to your tool's config 
 
 Web console: double-click `启动控制台.bat`, open `http://127.0.0.1:8317`.
 
-The **Ops / Admin** tab is the operator view: runtime status, DB schema/size, whether LLM/embedding is configured, request logs (default `membrane.db.log`, **never memory content or queries**), and a one-click multi-task isolation probe. Read-only endpoints: `/api/admin/diagnostics`, `/api/admin/logs`, `/api/admin/isolation-check`.
+The **Ops / Admin** tab is the operator view: runtime status, DB schema/size, whether LLM/embedding is configured, request logs (default `membrane.db.log`, **never memory content or queries**), an MCP connections panel (which AI agent connected over MCP, how many calls it made, and the last tool it used — handshake/call metadata only, **never memory content or queries**), and a one-click multi-task isolation probe. Read-only endpoints: `/api/admin/diagnostics`, `/api/admin/logs`, `/api/admin/mcp-clients`, `/api/admin/isolation-check`.
 
 ---
 
@@ -278,6 +278,7 @@ so the score bound stays at 1.0.
 
 Open `http://127.0.0.1:8317` after `membrane-memory serve`:
 
+- **Bilingual UI** (`中文 / EN` switch in the top bar, persisted): static copy and dynamic results switch together
 - **Three token modes** in the top bar (persisted): `ultra` + 3 hits / `brief` + 8 / `full` + 8
 - **Detail drawer**: content, validity window, tags, entities, relations, evidence, full audit chain
 - **Edit**: content/kind/subject/confidence/tags/pin → saved as a **new version**, old version kept in history

@@ -3,7 +3,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 coverage/
-.tmp-test/
+.tmp-*/
 
 ## Runtime data
 data/

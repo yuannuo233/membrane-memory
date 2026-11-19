@@ -112,6 +112,17 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/** 判断 MCP 进程是否还活着：信号 0 只探测不发送；EPERM 代表进程存在但没权限，也算活着 */
+function pidAlive(pid: number | null): boolean {
+  if (pid === null || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 /** GET query 里的多值/CSV：`?kinds=fact,episode` 或 `?kinds=fact&kinds=episode`（后者只留最后一个） */
 function asKindsCsv(v: unknown): MemoryKind[] | undefined {
   if (Array.isArray(v)) {
@@ -227,6 +238,35 @@ export async function route(
           fileError: null,
           maxEntries: 0,
         },
+      },
+    };
+  }
+  if (method === "GET" && urlPath === "/api/admin/mcp-clients") {
+    // MCP 是 stdio：每个 AI 客户端 spawn 一个独立进程，握手/工具调用元数据写同一 SQLite 库，
+    // 这里只读登记表，不碰记忆正文。PID 探活判断进程是否已退出；5 分钟无活动 → stale。
+    const now = Date.now();
+    const limit = asFiniteNumber(body.limit) ?? 50;
+    const clients = engine.storage.listMcpClients(limit).map((c) => ({
+      ...c,
+      state:
+        c.status === "closed" || (c.pid !== null && !pidAlive(c.pid))
+          ? "closed"
+          : now - c.lastSeen >= 5 * 60 * 1000
+            ? "stale"
+            : "active",
+    }));
+    ctx.logger?.info("admin.mcp_clients", {
+      total: clients.length,
+      active: clients.filter((c) => c.state === "active").length,
+    });
+    return {
+      status: 200,
+      body: {
+        clients,
+        total: clients.length,
+        active: clients.filter((c) => c.state === "active").length,
+        generatedAt: now,
+        staleAfterMs: 5 * 60 * 1000,
       },
     };
   }

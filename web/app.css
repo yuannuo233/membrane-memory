@@ -133,6 +133,11 @@ td:first-child{font-family:var(--mono);font-size:10px;color:var(--violet)}
 .mode-switch button{background:none;border:0;color:var(--muted);font-family:var(--mono);font-size:11px;padding:6px 10px;cursor:pointer;transition:.15s}
 .mode-switch button:hover{color:var(--text)}
 .mode-switch button.active{background:var(--accent-dim);color:var(--accent);font-weight:700}
+/* Language switch */
+.lang-switch{display:flex;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.lang-switch button{background:none;border:0;color:var(--muted);font-family:var(--mono);font-size:11px;padding:6px 10px;cursor:pointer;transition:.15s}
+.lang-switch button:hover{color:var(--text)}
+.lang-switch button.active{background:rgba(122,162,255,.16);color:var(--blue);font-weight:700}
 .sidebar-foot{border-top:1px solid var(--line)}
 .export-btn{margin:0 14px 16px;width:calc(100% - 28px);font-size:12px;padding:8px}
 .btn.ghost{background:transparent}
@@ -205,4 +210,4 @@ td:first-child{font-family:var(--mono);font-size:10px;color:var(--violet)}
 .iso-verdict{font-weight:600;margin-top:4px}
 
 @media(max-width:1100px){.stat-grid.six{grid-template-columns:repeat(3,1fr)}.diag-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:900px){.sidebar{width:64px}.brand-name,.brand-sub,.nav-item,.sidebar-foot>div:last-child{display:none}.nav-item{justify-content:center}.main{margin-left:64px;padding:0 20px 40px}.stat-grid{grid-template-columns:1fr 1fr}.stat-grid.six{grid-template-columns:1fr 1fr}.feature-grid{grid-template-columns:1fr}.export-btn{display:none}.detail-grid{grid-template-columns:1fr}.mode-switch button{padding:5px 7px;font-size:10px}}
+@media(max-width:900px){.sidebar{width:64px}.brand-name,.brand-sub,.nav-item,.sidebar-foot>div:last-child{display:none}.nav-item{justify-content:center}.main{margin-left:64px;padding:0 20px 40px}.stat-grid{grid-template-columns:1fr 1fr}.stat-grid.six{grid-template-columns:1fr 1fr}.feature-grid{grid-template-columns:1fr}.export-btn{display:none}.detail-grid{grid-template-columns:1fr}.mode-switch button,.lang-switch button{padding:5px 7px;font-size:10px}}

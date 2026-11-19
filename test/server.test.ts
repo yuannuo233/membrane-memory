@@ -77,6 +77,33 @@ describe("REST API", () => {
     expect(JSON.stringify(body)).not.toContain("不能出现");
   });
 
+  it("admin mcp-clients 返回接入登记，且不泄露正文", async () => {
+    m.storage.recordMcpClient({
+      sessionId: "sess-server-test",
+      clientName: "Cursor",
+      clientVersion: "0.48",
+      protocolVersion: "2024-11-05",
+      pid: process.pid,
+      cwd: "E:/tmp/project",
+    });
+    m.storage.touchMcpClient("sess-server-test", "membrane_recall");
+    const res = await route(m, "GET", "/api/admin/mcp-clients", { limit: "10" }, webDir);
+    const body = res.body as {
+      clients: Array<{ clientName: string; calls: number; lastTool: string; state: string }>;
+      total: number;
+      active: number;
+    };
+    expect(body.total).toBe(1);
+    expect(body.active).toBe(1);
+    expect(body.clients[0]).toMatchObject({
+      clientName: "Cursor",
+      calls: 1,
+      lastTool: "membrane_recall",
+      state: "active",
+    });
+    expect(JSON.stringify(body)).not.toContain("用户住在北京");
+  });
+
   it("admin isolation-check 当场证明跨 namespace 不串", async () => {
     const res = await r("GET", "/api/admin/isolation-check");
     const body = res.body as {

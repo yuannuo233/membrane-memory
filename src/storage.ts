@@ -28,7 +28,7 @@ import type {
   Relation,
 } from "./types.js";
 
-/** 当前 schema 版本：表结构变更时递增并写迁移逻辑。v2 新增图检索三表（纯加法） */
+/** 当前 schema 版本：表结构变更时递增并写迁移逻辑。v2 新增图检索三表 + MCP 客户端登记表（纯加法） */
 const SCHEMA_VERSION = 2;
 
 /**
@@ -67,6 +67,33 @@ function relationTemporalSql(asOf?: number): { sql: string; params: number[] } {
 export interface FtsHit {
   record: MemoryRecord;
   bm25: number;
+}
+
+/** MCP 客户端登记（只记录握手/调用元数据，不记录正文或查询） */
+export interface McpClientInput {
+  sessionId: string;
+  clientName?: string;
+  clientVersion?: string;
+  protocolVersion?: string;
+  transport?: string;
+  pid?: number;
+  cwd?: string;
+  startedAt?: number;
+}
+
+export interface McpClientRecord {
+  sessionId: string;
+  clientName: string;
+  clientVersion: string | null;
+  protocolVersion: string | null;
+  transport: string;
+  pid: number | null;
+  cwd: string | null;
+  startedAt: number;
+  lastSeen: number;
+  calls: number;
+  lastTool: string | null;
+  status: string;
 }
 
 /** searchFts 的过滤条件 */
@@ -310,6 +337,23 @@ export class Storage {
         PRIMARY KEY (memory_id, entity_id)
       );
       CREATE INDEX IF NOT EXISTS idx_memory_entities_entity ON memory_entities(entity_id);
+      -- MCP 客户端登记：stdio 每个客户端一个进程，写同一 SQLite 库，
+      -- 让 REST/Ops 能看到“谁连过、调了什么工具”。只存元数据，不存正文/查询。
+      CREATE TABLE IF NOT EXISTS mcp_clients (
+        session_id       TEXT PRIMARY KEY,
+        client_name      TEXT NOT NULL DEFAULT 'unknown',
+        client_version   TEXT,
+        protocol_version TEXT,
+        transport        TEXT NOT NULL DEFAULT 'stdio',
+        pid              INTEGER,
+        cwd              TEXT,
+        started_at       INTEGER NOT NULL,
+        last_seen        INTEGER NOT NULL,
+        calls            INTEGER NOT NULL DEFAULT 0,
+        last_tool        TEXT,
+        status           TEXT NOT NULL DEFAULT 'active'
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcp_clients_last_seen ON mcp_clients(last_seen DESC);
     `);
     // 向后兼容迁移：老库没有 namespace 列时补上（ALTER TABLE 加列，幂等）。
     // 注意顺序：必须先加列，再建依赖该列的索引——否则老库升级会报 no such column。
@@ -963,6 +1007,81 @@ export class Storage {
       entities: Number(graph["entities"] ?? 0),
       relations: Number(graph["relations"] ?? 0),
     };
+  }
+
+  // ---------- MCP 客户端登记（只记录元数据，不记录正文/查询） ----------
+
+  /** 首次 initialize / 重复握手：写入或更新会话元数据 */
+  recordMcpClient(input: McpClientInput): void {
+    const now = Date.now();
+    this.stmt(
+      `INSERT INTO mcp_clients
+         (session_id, client_name, client_version, protocol_version, transport, pid, cwd,
+          started_at, last_seen, calls, last_tool, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 'active')
+       ON CONFLICT(session_id) DO UPDATE SET
+         client_name = excluded.client_name,
+         client_version = excluded.client_version,
+         protocol_version = excluded.protocol_version,
+         transport = excluded.transport,
+         pid = excluded.pid,
+         cwd = excluded.cwd,
+         last_seen = excluded.last_seen,
+         status = 'active'`,
+    ).run(
+      input.sessionId,
+      input.clientName?.trim() || "unknown",
+      input.clientVersion ?? null,
+      input.protocolVersion ?? null,
+      input.transport ?? "stdio",
+      input.pid ?? null,
+      input.cwd ?? null,
+      input.startedAt ?? now,
+      now,
+    );
+  }
+
+  /** 每次 tools/call 更新“最后活动 / 调用次数 / 最后工具” */
+  touchMcpClient(sessionId: string, tool?: string): void {
+    this.stmt(
+      `UPDATE mcp_clients
+          SET last_seen = ?, calls = calls + 1, last_tool = ?, status = 'active'
+        WHERE session_id = ?`,
+    ).run(Date.now(), tool ?? null, sessionId);
+  }
+
+  /** 进程正常退出：标记为已断开；异常退出靠 last_seen 超时识别 */
+  closeMcpClient(sessionId: string): void {
+    this.stmt(
+      `UPDATE mcp_clients SET last_seen = ?, status = 'closed' WHERE session_id = ?`,
+    ).run(Date.now(), sessionId);
+  }
+
+  /** Ops 页面：最近活动的 MCP 客户端 */
+  listMcpClients(limit = 50): McpClientRecord[] {
+    // NaN/非数值兜底为默认值，否则 SQL LIMIT 绑定 NaN 会直接抛错
+    const safeLimit = Number.isFinite(limit) ? limit : 50;
+    const rows = this.stmt(
+      `SELECT session_id, client_name, client_version, protocol_version, transport, pid, cwd,
+              started_at, last_seen, calls, last_tool, status
+         FROM mcp_clients
+        ORDER BY last_seen DESC
+        LIMIT ?`,
+    ).all(Math.max(1, Math.min(200, safeLimit))) as Row[];
+    return rows.map((r) => ({
+      sessionId: String(r["session_id"]),
+      clientName: String(r["client_name"] ?? "unknown"),
+      clientVersion: r["client_version"] == null ? null : String(r["client_version"]),
+      protocolVersion: r["protocol_version"] == null ? null : String(r["protocol_version"]),
+      transport: String(r["transport"] ?? "stdio"),
+      pid: r["pid"] == null ? null : Number(r["pid"]),
+      cwd: r["cwd"] == null ? null : String(r["cwd"]),
+      startedAt: Number(r["started_at"]),
+      lastSeen: Number(r["last_seen"]),
+      calls: Number(r["calls"] ?? 0),
+      lastTool: r["last_tool"] == null ? null : String(r["last_tool"]),
+      status: String(r["status"] ?? "active"),
+    }));
   }
 
   // ---------- 导出 / 导入（备份与迁移用） ----------

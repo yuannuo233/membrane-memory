@@ -96,6 +96,24 @@ CREATE TABLE relations (
   namespace  TEXT NOT NULL
 );
 CREATE TABLE memory_entities ( memory_id TEXT NOT NULL, entity_id TEXT NOT NULL );
+
+-- v0.2.3 新增：MCP 客户端登记辅助表（纯加法，不升 schema 版本）
+-- stdio 每个 AI 客户端一个进程，写同一 SQLite 库；Ops 只读它来回答“谁连过、调了什么工具”。
+-- 只存握手/调用元数据，不存记忆正文或查询词。
+CREATE TABLE mcp_clients (
+  session_id TEXT PRIMARY KEY,
+  client_name TEXT NOT NULL DEFAULT 'unknown',
+  client_version TEXT,
+  protocol_version TEXT,
+  transport TEXT NOT NULL DEFAULT 'stdio',
+  pid INTEGER,
+  cwd TEXT,
+  started_at INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0,
+  last_tool TEXT,
+  status TEXT NOT NULL DEFAULT 'active'
+);
 ```
 
 > **为什么 entity 的唯一键是 (namespace, name) 而不是 (namespace, name, type)**：

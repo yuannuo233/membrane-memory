@@ -36,6 +36,51 @@ describe("MCP 协议", () => {
     expect(result.serverInfo).toMatchObject({ name: "membrane-memory" });
   });
 
+  it("initialize 登记 clientInfo，tools/call 更新调用统计", async () => {
+    const sessionId = "sess-test";
+    const init = await handleLine(
+      m,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 10,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          clientInfo: { name: "Claude Desktop", version: "1.2.3" },
+        },
+      }),
+      sessionId,
+    );
+    expect(init).not.toBeNull();
+    let rows = m.storage.listMcpClients();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      sessionId,
+      clientName: "Claude Desktop",
+      clientVersion: "1.2.3",
+      protocolVersion: "2025-06-18",
+      transport: "stdio",
+      calls: 0,
+      status: "active",
+    });
+
+    await handleLine(
+      m,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 11,
+        method: "tools/call",
+        params: { name: "membrane_stats", arguments: {} },
+      }),
+      sessionId,
+    );
+    rows = m.storage.listMcpClients();
+    expect(rows[0]).toMatchObject({ calls: 1, lastTool: "membrane_stats", status: "active" });
+
+    m.storage.closeMcpClient(sessionId);
+    expect(m.storage.listMcpClients()[0]!.status).toBe("closed");
+  });
+
   it("ping 返回空 result", async () => {
     expect((await rpc(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }))).result).toEqual({});
   });

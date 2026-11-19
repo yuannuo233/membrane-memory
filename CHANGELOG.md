@@ -9,6 +9,79 @@
 
 ---
 
+## v0.2.3 — 未发布（2026-11-19）
+
+中英双语控制台版：Web 控制台从“只有中文”改为**中文 / English 可切换**，静态页面与动态数据都跟着切；语言选择本地记住，刷新后保持。
+**破坏性变更：无**；默认仍按浏览器语言选择，后端 API 与 CLI 不变。
+
+### 1. 双语静态页面（`web/index.html`）
+
+- 导航、标题、表单标签、表头、按钮、弹窗、Ops 页面全部改用 `data-i18n` 键，中文作为默认文本保留。
+- 新增顶部语言切换 `#lang-switch`：`中文` / `EN`。
+- 支持三类本地化属性：
+  - `data-i18n`：文本内容；
+  - `data-i18n-ph`：输入框 placeholder；
+  - `data-i18n-title`：title 提示。
+- `<option>` 也带 `data-i18n`，下拉选项会随语言切换。
+
+### 2. 双语逻辑（`web/app.js`）
+
+- 新增完整 `I18N.zh` / `I18N.en` 字典与 `t(key, vars)`，支持 `{name}` 插值；缺 key 先回退中文，再回退 key。
+- 语言检测：`localStorage.membrane.lang` 优先；无值时按 `navigator.language`（`zh` 开头 → 中文，否则英文）。
+- 新增 `applyStaticLanguage()`：同步 `document.lang`、页面标题、三类 `data-i18n` 属性与语言按钮 active。
+- 新增 `refreshLocalizedViews()`：切语言后刷新概览 / 台账 / Ops / 召回结果 / 隔离结果 / 详情弹窗，并更新页面标题。
+- 新增 `setLanguage(next, refresh)`：写入 `localStorage` 后立即应用语言与 Token 模式。
+- `MODES` 改为 key 结构，`applyMode()` 不再引用旧 `.label` / `.hint`；避免出现 `undefined模式`。
+- 召回结果、台账、审计链、详情、编辑、遗忘、导出 toast、Ops 诊断、请求日志、隔离检测结果全部改用 `t()`。
+- 语言切换不再覆盖真实数据库路径：`#db-path` 由 `loadStats()` 填；只有仍显示“本地数据库 / Local database”兜底文案时，才跟随语言切换。
+- 顶栏 `#health-chip` 也纳入语言切换，避免英文界面残留“● 运行正常”。
+
+### 3. 样式（`web/app.css`）
+
+- 新增 `.lang-switch` 样式，和 `.mode-switch` 保持同一视觉语言；窄屏下两个切换器一起缩。
+- 语言按钮 active 使用蓝色高亮，和 Token 模式的绿色高亮区分。
+
+### 4. 验证
+
+- `node --check web/app.js` 通过。
+- `npm run build` 通过。
+- `npm test`：**212/212 通过，15 个测试文件**。
+- `npm run check`：全部文档与源码一致。
+- 真实浏览器验证：中文 / EN 切换、刷新保持、概览 / 写入 / Ops / 隔离结果动态切换。
+- 真实浏览器验证 MCP 面板：模拟 `Claude Desktop` 通过 stdio 连接后，Ops 显示客户端名、版本、协议、PID、调用次数、最后工具与最后活动；中英文状态文案均正确。
+- **待补**：召回结果 / 详情弹窗 / 编辑弹窗的完整双语浏览器走查。
+
+### 5. 文档
+
+- `_internal/竞品对比与弱项.md` 重排大纲，新增合规 / 加密 / 保留策略、多模态、规模 / ANN 三个专题。
+- 新增 `_internal/交接-当前工作记录.md`，记录本轮全部工作与接手清单。
+- 两份内部文档均在 `.gitignore` 的 `_internal/` 下，**不提交 GitHub**。
+
+### 6. MCP 接入可视化（Ops）
+
+**问题**：控制台看不到“谁通过 MCP 接入了这个记忆库”。MCP 是手写 stdio server，一个客户端一个进程；`initialize` 里的 `clientInfo` 被直接忽略，`startMcpServer()` 只在 stderr 打一行启动日志，REST 与 MCP 是两个独立进程，Ops 自然看不到另一个进程。
+
+**修法**（纯加法，不改 MCP 协议行为）：
+
+- `src/storage.ts`：新增辅助表 `mcp_clients`（会话 id、客户端名/版本、协议、传输、PID、cwd、首次/最后活动、调用次数、最后工具、状态）；新增 `recordMcpClient()` / `touchMcpClient()` / `closeMcpClient()` / `listMcpClients()`。`SCHEMA_VERSION` 保持 2：这是可忽略的辅助表，老库自动建表，不升级、不迁移。
+- `src/mcp.ts`：`startMcpServer()` 为每个进程生成 `randomUUID()` 会话 id；`initialize` 读取 `params.clientInfo.name/version` 并登记；每次 `tools/call` 更新最后活动/调用次数/最后工具；SIGINT/SIGTERM/stdin 关闭/exit 标记 `closed`。
+- `src/server.ts`：新增 `GET /api/admin/mcp-clients`，返回 `clients / total / active / generatedAt / staleAfterMs`；`PID` 探活（`process.kill(pid, 0)`，不发送信号）：进程已退出 → `closed`；5 分钟无活动 → `stale`（可能只是空闲，也可能是父进程强杀后没来得及写 `closed`）。
+- `web/index.html` + `web/app.js`：Ops 新增“MCP 接入”面板，显示状态、AI Agent、版本、协议、PID、调用次数、最后工具、最后活动；只读元数据，**不显示记忆正文或查询**。
+- 隐私边界：只记录握手/调用元数据，不记录 prompt、查询词、记忆正文；`cwd` 用于区分同名客户端的不同项目。
+- 测试：`test/mcp.test.ts` 覆盖 `initialize` 登记与 `tools/call` 计数、关闭；`test/server.test.ts` 覆盖 `/api/admin/mcp-clients` 且断言不泄露正文。
+
+**影响文件**：`src/storage.ts`、`src/mcp.ts`、`src/server.ts`、`web/index.html`、`web/app.js`、`test/mcp.test.ts`、`test/server.test.ts`、`README.md`、`README.en.md`、`DESIGN.md`、`.gitignore`、`CHANGELOG.md`。
+
+### 7. 自查修复（本轮代码审查发现）
+
+- **高危 · 登记写库失败会杀死整个 MCP server**：`recordMcpClient` / `touchMcpClient` 原先没有 try/catch 保护，`startMcpServer()` 的 promise 链也没有 `.catch()`。磁盘满或 SQLite 锁超时（> busy_timeout 5 秒）时，unhandled rejection 在 Node 24 默认**直接崩溃进程**——客户端 initialize 挂死。修复：两处登记改为 best-effort（失败只写 stderr，不影响协议响应），`startMcpServer()` 补 `.catch()` 兜底。
+- **中危 · `listMcpClients(NaN)` 会抛 SQL 错**：`Math.max(1, Math.min(200, NaN))` 结果是 NaN，绑定到 `LIMIT ?` 直接报错。修复：`Number.isFinite` 兜底为默认值 50。
+- 审查确认无问题的点：`t()` 遮蔽（`openDetail` 等处已修，无残留）、`esc()` 对数字安全、badge 样式类齐全、admin 路由在配 token 时同样受 Bearer 保护、MCP 工具级错误用 `isError: true`（符合规范，协议级错误才用 `error` 字段）、未知方法返回 `-32601`。
+
+**影响文件**：`src/mcp.ts`、`src/storage.ts`、`CHANGELOG.md`。
+
+---
+
 ## v0.2.2 — 2026-11-18
 
 运维可观测版：给懂行的人一个能看日志/诊断的后台，并把“一个 Agent 多任务会不会串记忆”做成可复现实验。

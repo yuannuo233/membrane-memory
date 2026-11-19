@@ -38,7 +38,7 @@ Membrane gives AI agents persistent memory with three differentiating properties
 - Entity typing is heuristic (suffix rules, surname list); wrong types never affect recall, only readability.
 - Multi-process concurrency: SQLite single-writer; concurrent writers wait up to 5s, then fail.
 - Only Chinese and English tokenization verified.
-- 210 tests, all authored by the maintainer; no independent third-party validation yet.
+- 212 tests, all authored by the maintainer; no independent third-party validation yet.
 - Default weights and half-lives are untuned heuristics.
 
 ## Install & quick start
@@ -73,7 +73,7 @@ Methods: `add(input) -> AddResult`, `recall(options) -> RecallHit[]`, `forget(id
 - Fuzzy fallback uses an inverted index (`char_index` table), not a full scan: 2.9x faster on average, 10x faster for rare character combinations.
 - Storage writes wrap the base row and its full-text index in one reentrant transaction, so a crash cannot leave a record that exists but cannot be found.
 - Concurrency: `PRAGMA busy_timeout = 5000`; verified 8 processes × 100 writes with zero loss.
-- 210 tests, all passing (verified by GitHub Actions on every push).
+- 212 tests, all passing (verified by GitHub Actions on every push).
 - Multi-task isolation: `namespace` is a hard filter; **memories in the same namespace are recalled together** (task A and task B both become candidates), while different namespaces have zero leakage (doctor scenario 6 / `/api/admin/isolation-check`). Use `task-<id>` per task, plus a separate `shared` namespace. No automatic `task_id` field yet.
 
 ## Docs
