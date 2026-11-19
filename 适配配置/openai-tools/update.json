@@ -1,0 +1,20 @@
+{
+  "type": "function",
+  "function": {
+    "name": "membrane_update",
+    "description": "修正一条记忆。不会原地覆盖：旧版本被取代但保留在历史里，可用 asOf 查回编辑前的样子。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "记忆 ULID（从 recall 结果获得）" },
+        "content": { "type": "string", "description": "新内容；不填则沿用旧内容" },
+        "subject": { "type": "string" },
+        "kind": { "type": "string", "enum": ["fact", "episode", "preference", "procedure"] },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "pin": { "type": "boolean" }
+      },
+      "required": ["id"]
+    }
+  }
+}

@@ -1,0 +1,172 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "membrane_remember",
+      "description": "把一条值得长期记住的事实/偏好/流程写进本地记忆库。相同内容会自动去重，冲突内容会自动取代旧版本。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "要记住的内容，一句完整的话"
+          },
+          "subject": {
+            "type": "string",
+            "description": "这句话描述谁/什么，例如 用户、张三、项目A"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "episode",
+              "preference",
+              "procedure"
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "namespace": {
+            "type": "string",
+            "description": "租户/项目隔离，默认 default"
+          },
+          "pin": {
+            "type": "boolean",
+            "description": "固定，不被自动取代"
+          }
+        },
+        "required": [
+          "content"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "membrane_recall",
+      "description": "从本地记忆库召回与当前问题相关的记忆。返回按相关性排序的结果，并附带 why / 分数明细（full 模式）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "自然语言查询，例如 用户住在哪"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 8
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "episode",
+              "preference",
+              "procedure"
+            ]
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "asOf": {
+            "type": "integer",
+            "description": "历史时点（Unix 毫秒），不填=只看现行记忆"
+          },
+          "detail": {
+            "type": "string",
+            "enum": [
+              "ultra",
+              "brief",
+              "full"
+            ],
+            "default": "brief",
+            "description": "ultra 最省 token（仅 id/内容/分数）；brief 日常；full 带完整解释"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "membrane_update",
+      "description": "修正一条记忆。不会原地覆盖：旧版本被取代但保留在历史里，可用 asOf 查回编辑前的样子。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "记忆 ULID（从 recall 结果获得）"
+          },
+          "content": {
+            "type": "string",
+            "description": "新内容；不填则沿用旧内容"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "episode",
+              "preference",
+              "procedure"
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "pin": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "membrane_forget",
+      "description": "软删除一条记忆（墓碑）。数据不会物理消失，历史快照仍可查到，便于审计与撤回。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "记忆 ULID"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  }
+]

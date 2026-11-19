@@ -41,6 +41,28 @@ const CURRENT_SQL = (alias = ""): string => {
   return `${p}deleted = 0 AND ${p}valid_to IS NULL`;
 };
 
+/**
+ * 记忆的时间过滤条件（现行有效 / 指定时点历史）。
+ * 单点定义：FTS、模糊、向量扫描三处共用——以前三处各抄一份，
+ * 改语义时漏一处就会"全文过滤对了、向量没过滤"这类幽灵 bug。
+ */
+function memoryTemporalSql(alias: string, asOf?: number): { sql: string; params: number[] } {
+  if (asOf === undefined) return { sql: CURRENT_SQL(alias), params: [] };
+  const p = alias ? alias + "." : "";
+  // 历史时点只看有效区间：不要把 deleted 标志带进来——
+  // 软删除会把 valid_to 设为删除时刻，asOf 早于它时这条记忆"当时确实存在"。
+  return {
+    sql: `${p}valid_from <= ? AND (${p}valid_to IS NULL OR ${p}valid_to > ?)`,
+    params: [asOf, asOf],
+  };
+}
+
+/** 关系边的时间过滤（关系没有 deleted 列：关闭即 valid_to 非空） */
+function relationTemporalSql(asOf?: number): { sql: string; params: number[] } {
+  if (asOf === undefined) return { sql: "valid_to IS NULL", params: [] };
+  return { sql: "valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)", params: [asOf, asOf] };
+}
+
 /** FTS5 检索命中的原始行（bm25 为 SQLite 原生分，越小（越负）越相关） */
 export interface FtsHit {
   record: MemoryRecord;
@@ -110,6 +132,8 @@ function rowToRelation(row: Row): Relation {
 export interface ListOptions {
   validity?: ListValidity;
   kind?: MemoryKind;
+  /** 多 kind 过滤（kind 优先；两者都给时 kind 生效） */
+  kinds?: MemoryKind[];
   subject?: string | null;
   /** 命名空间过滤，默认 "default" */
   namespace?: string;
@@ -435,6 +459,9 @@ export class Storage {
     if (options.kind) {
       where.push("kind = ?");
       params.push(options.kind);
+    } else if (options.kinds && options.kinds.length > 0) {
+      where.push(`kind IN (${options.kinds.map(() => "?").join(",")})`);
+      params.push(...options.kinds);
     }
     if (options.subject !== undefined) {
       if (options.subject === null) {
@@ -482,13 +509,9 @@ export class Storage {
   private searchFtsOnce(matchExpr: string, options: FtsSearchOptions): FtsHit[] {
     const where: string[] = ["memory_fts MATCH ?", "m.namespace = ?"];
     const params: (string | number | null)[] = [matchExpr, options.namespace ?? "default"];
-    if (options.asOf === undefined) {
-      where.push(CURRENT_SQL("m")); // 现行有效
-    } else {
-      // 历史时点：valid_from <= t 且 (valid_to 为空或 > t)——软删除行靠 valid_to 自然排除
-      where.push("m.valid_from <= ?", "(m.valid_to IS NULL OR m.valid_to > ?)");
-      params.push(options.asOf, options.asOf);
-    }
+    const temporal = memoryTemporalSql("m", options.asOf);
+    where.push(temporal.sql);
+    params.push(...temporal.params);
     if (options.kind) {
       where.push("m.kind = ?");
       params.push(options.kind);
@@ -545,20 +568,15 @@ export class Storage {
     if (units.length === 0) return [];
     const placeholders = units.map(() => "?").join(",");
     const params: (string | number)[] = [...units, namespace];
-    let temporal: string;
-    if (asOf === undefined) {
-      temporal = CURRENT_SQL("m");
-    } else {
-      temporal = "m.valid_from <= ? AND (m.valid_to IS NULL OR m.valid_to > ?) AND m.deleted = 0";
-      params.push(asOf, asOf);
-    }
+    const temporal = memoryTemporalSql("m", asOf);
+    params.push(...temporal.params);
     const rows = this.stmt(
       `SELECT ci.memory_id AS id, COUNT(*) AS hits
          FROM char_index ci
          JOIN memories m ON m.id = ci.memory_id
         WHERE ci.unit IN (${placeholders})
           AND m.namespace = ?
-          AND ${temporal}
+          AND ${temporal.sql}
         GROUP BY ci.memory_id
         ORDER BY hits DESC
         LIMIT ?`,
@@ -667,12 +685,9 @@ export class Storage {
     const batch = options.batchSize && options.batchSize > 0 ? options.batchSize : 512;
     const where: string[] = ["e.rowid > ?", "m.namespace = ?"];
     const base: (string | number | null)[] = [0, options.namespace];
-    if (options.asOf === undefined) {
-      where.push(CURRENT_SQL("m"));
-    } else {
-      where.push("m.valid_from <= ?", "(m.valid_to IS NULL OR m.valid_to > ?)", "m.deleted = 0");
-      base.push(options.asOf, options.asOf);
-    }
+    const temporal = memoryTemporalSql("m", options.asOf);
+    where.push(temporal.sql);
+    base.push(...temporal.params);
     if (options.kind) {
       where.push("m.kind = ?");
       base.push(options.kind);
@@ -779,11 +794,9 @@ export class Storage {
     const ns = options.namespace ?? "default";
     const where: string[] = ["namespace = ?"];
     const params: (string | number)[] = [ns];
-    if (options.asOf === undefined) where.push("valid_to IS NULL");
-    else {
-      where.push("valid_from <= ?", "(valid_to IS NULL OR valid_to > ?)");
-      params.push(options.asOf, options.asOf);
-    }
+    const temporal = relationTemporalSql(options.asOf);
+    where.push(temporal.sql);
+    params.push(...temporal.params);
     const placeholders = ids.map(() => "?").join(",");
     const limit = options.limit && options.limit > 0 ? options.limit : 1000;
     const rows = this.stmt(
@@ -795,34 +808,6 @@ export class Storage {
         LIMIT ?`,
     ).all(...params, ...ids, ...ids, limit) as Row[];
     return rows.map(rowToRelation);
-  }
-
-  /** 按记忆批量取关系（recall 展示图路证据用，避免 N+1） */
-  relationsForMemoryIds(ids: string[], asOf?: number): Map<string, Relation[]> {
-    const out = new Map<string, Relation[]>();
-    if (ids.length === 0) return out;
-    for (let i = 0; i < ids.length; i += 400) {
-      const chunk = ids.slice(i, i + 400);
-      const where: string[] = [`memory_id IN (${chunk.map(() => "?").join(",")})`];
-      const params: (string | number)[] = [...chunk];
-      if (asOf === undefined) where.push("valid_to IS NULL");
-      else {
-        where.push("valid_from <= ?", "(valid_to IS NULL OR valid_to > ?)");
-        params.push(asOf, asOf);
-      }
-      const rows = this.stmt(
-        `SELECT id, from_id, to_id, predicate, memory_id, confidence, valid_from, valid_to, namespace
-           FROM relations WHERE ${where.join(" AND ")}`,
-      ).all(...params) as Row[];
-      for (const row of rows) {
-        const rel = rowToRelation(row);
-        const key = rel.memoryId ?? "";
-        const list = out.get(key);
-        if (list) list.push(rel);
-        else out.set(key, [rel]);
-      }
-    }
-    return out;
   }
 
   /**
@@ -845,16 +830,9 @@ export class Storage {
     return rows.map(rowToEntity);
   }
 
-  /** 图路候选：命中了关系、且关系指向这些记忆 → 返回记忆 id 及命中边数 */
-  memoryIdsForRelations(relations: Relation[]): { id: string; hits: number }[] {
-    const counts = new Map<string, number>();
-    for (const r of relations) {
-      if (!r.memoryId) continue;
-      counts.set(r.memoryId, (counts.get(r.memoryId) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .map(([id, hits]) => ({ id, hits }))
-      .sort((a, b) => b.hits - a.hits);
+  /** 遗忘时清掉"这条记忆提到谁"的关联（实体本身可能还被别的记忆引用，不删） */
+  deleteMemoryEntities(memoryId: string): void {
+    this.stmt(`DELETE FROM memory_entities WHERE memory_id = ?`).run(memoryId);
   }
 
   // ---------- history（审计） ----------
@@ -900,6 +878,11 @@ export class Storage {
       `SELECT quote, created_at FROM evidence WHERE memory_id = ? ORDER BY seq ASC`,
     ).all(memoryId) as { quote: string; created_at: number }[];
     return rows.map((r) => ({ quote: String(r.quote), at: Number(r.created_at) }));
+  }
+
+  /** 追加一条证据（导入还原用；正常写入统一走 evidenceReplace） */
+  appendEvidence(memoryId: string, quote: string, at: number): void {
+    if (quote.trim().length > 0) this.evidenceAdd(memoryId, quote.trim(), at);
   }
 
   /** 批量替换证据（先清后加；调用方保证在事务内） */
@@ -952,7 +935,14 @@ export class Storage {
       n: number;
     }[];
     const byKind = { fact: 0, episode: 0, preference: 0, procedure: 0 };
-    for (const r of byKindRows) byKind[r.kind] = Number(r.n);
+    for (const r of byKindRows) {
+      // 只统计四种合法 kind：脏数据（手改库/旧实验数据）不能往固定形状的对象上乱写键
+      if (Object.prototype.hasOwnProperty.call(byKind, r.kind)) byKind[r.kind] = Number(r.n);
+    }
+    const graph = this.stmt(
+      `SELECT (SELECT COUNT(*) FROM entities) AS entities,
+              (SELECT COUNT(*) FROM relations) AS relations`,
+    ).get() as Row;
     let dbBytes = 0;
     if (this.path !== ":memory:" && existsSync(this.path)) {
       dbBytes = statSync(this.path).size;
@@ -965,7 +955,60 @@ export class Storage {
       pinned: Number(row["pinned"] ?? 0),
       byKind,
       dbBytes,
+      entities: Number(graph["entities"] ?? 0),
+      relations: Number(graph["relations"] ?? 0),
     };
+  }
+
+  // ---------- 导出 / 导入（备份与迁移用） ----------
+
+  /** 全部记忆（含历史版本/已删除的底稿；备份要"全"，恢复才不丢取代链） */
+  allMemories(): MemoryRecord[] {
+    const rows = this.stmt(`SELECT * FROM memories ORDER BY valid_from ASC, id ASC`).all();
+    return toRecords(rows as unknown[]);
+  }
+
+  /** 全部证据（按写入顺序，保序才能还原"观察先后"） */
+  allEvidence(): { memoryId: string; quote: string; at: number }[] {
+    const rows = this.stmt(
+      `SELECT memory_id, quote, created_at FROM evidence ORDER BY seq ASC`,
+    ).all() as { memory_id: string; quote: string; created_at: number }[];
+    return rows.map((r) => ({
+      memoryId: String(r.memory_id),
+      quote: String(r.quote),
+      at: Number(r.created_at),
+    }));
+  }
+
+  /** 全部实体（跨命名空间；备份不能只导 default） */
+  allEntities(): GraphEntity[] {
+    const rows = this.stmt(
+      `SELECT id, name, type, namespace, created_at FROM entities ORDER BY created_at ASC, id ASC`,
+    ).all() as Row[];
+    return rows.map(rowToEntity);
+  }
+
+  /** 全部关系边（含已关闭的，保留时间语义） */
+  allRelations(): Relation[] {
+    const rows = this.stmt(
+      `SELECT id, from_id, to_id, predicate, memory_id, confidence, valid_from, valid_to, namespace
+         FROM relations ORDER BY valid_from ASC, id ASC`,
+    ).all() as Row[];
+    return rows.map(rowToRelation);
+  }
+
+  /** 记忆 ↔ 实体关联全量（导入时还原"这条记忆提到谁"） */
+  allMemoryEntities(): { memoryId: string; entityId: string }[] {
+    const rows = this.stmt(`SELECT memory_id, entity_id FROM memory_entities`).all() as {
+      memory_id: string;
+      entity_id: string;
+    }[];
+    return rows.map((r) => ({ memoryId: String(r.memory_id), entityId: String(r.entity_id) }));
+  }
+
+  /** 关系 id 是否已存在（导入幂等：重复导入同一份备份不产生重复边） */
+  hasRelation(id: string): boolean {
+    return this.stmt(`SELECT 1 FROM relations WHERE id = ?`).get(id) !== undefined;
   }
 
   // ---------- 生命周期 ----------

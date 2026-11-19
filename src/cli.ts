@@ -19,8 +19,11 @@ import { runMcp } from "./mcp.js";
 import { startServer } from "./server.js";
 import { runDoctor, formatDoctorReport, writeDoctorReport } from "./doctor.js";
 import { llmFromEnv } from "./llm.js";
+import { asEntityType, asKind } from "./input.js";
+import { buildMcpConfig, MCP_CLIENTS } from "./mcp-config.js";
 import { ENTITY_TYPES, MEMORY_KINDS, type EntityType, type MemoryKind } from "./types.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const argv = process.argv.slice(2);
 const cmd = (argv[0] ?? "--help").toLowerCase();
@@ -31,6 +34,7 @@ function help(): void {
 
 用法：
   membrane-memory mcp                      启动 MCP server（给 WorkBuddy/Claude/Cline/AstrBot 等用）
+  membrane-memory mcp-config [客户端]      生成某客户端的接入配置（路径自动填好，直接粘贴）
   membrane-memory serve                    启动 REST API + Web 控制台（默认 http://127.0.0.1:8317）
   membrane-memory add "内容" [选项]        写入一条记忆
   membrane-memory search "查询" [选项]     召回记忆（显示 why 和分数明细）
@@ -40,6 +44,8 @@ function help(): void {
   membrane-memory embed-backfill [选项]    给已有记忆批量补向量（会调 embedding 端点）
   membrane-memory list [选项]              列出记忆
   membrane-memory stats                    库况速览
+  membrane-memory export [选项]            导出全量备份（JSON，可跨机器恢复）
+  membrane-memory import <文件>            导入备份（按 id 去重，不覆盖现有数据）
   membrane-memory doctor                   自检
   membrane-memory --help                   显示本帮助
 
@@ -48,6 +54,7 @@ add 选项：
   --subject "主语"                           主语/实体名
   --subject-type ${ENTITY_TYPES.join("|")}
   --tags "标签1,标签2"                       逗号分隔的标签
+  --entities "李四,腾讯"                     手动标注这条记忆涉及的实体
   --pin                                      钉选（永不自动取代）
   --namespace "名字"                         命名空间（多租户隔离，默认 default）
   --no-embed                                 本次不调 embedding（快）
@@ -55,6 +62,8 @@ add 选项：
 search 选项：
   --limit N       返回条数（默认 8）
   --as-of MS      历史时点查询（unix 毫秒）
+  --kind K        按记忆种类过滤
+  --kinds a,b     按多种类过滤（逗号分隔）
   --subject X     按主语过滤
   --hops N        关系图路最多几跳（默认 1）
   --no-graph      关闭关系图路
@@ -71,6 +80,16 @@ link 选项：
 embed-backfill 选项：
   --namespace X   只补某个命名空间
   --limit N       最多补 N 条
+
+export 选项：
+  --out 文件      输出路径（默认当前目录 membrane-backup-<时间>.json）
+  --no-embeddings 不导向量（文件更小，恢复后需 embed-backfill）
+
+mcp-config 选项：
+  --out 文件      把配置写到文件（已存在则拒绝覆盖，避免冲掉别人的 mcpServers）
+  --db 路径       指定记忆库路径（默认 MEMBRANE_DB 或当前目录 membrane.db）
+  --node 路径     指定 node 可执行文件（默认当前运行的 node）
+  不带客户端名     列出所有支持的客户端
 
 环境变量：
   MEMBRANE_DB              SQLite 数据库路径（默认当前目录 ./membrane.db）
@@ -130,26 +149,34 @@ function positionals(args: string[]): string[] {
 
 function parseKind(v: string | undefined): MemoryKind | undefined {
   if (!v) return undefined;
-  if (!MEMORY_KINDS.includes(v as MemoryKind)) {
+  const k = asKind(v);
+  if (!k) {
     console.error(`kind 必须是 ${MEMORY_KINDS.join(" / ")} 之一，收到：${v}`);
     process.exit(2);
   }
-  return v as MemoryKind;
+  return k;
 }
 
 /** 解析实体类型（未知名直接报错，避免把类型写错的锅甩给引擎） */
 function parseEntityType(v: string | undefined): EntityType | undefined {
   if (!v) return undefined;
-  if (!isEntityType(v)) {
+  const t = asEntityType(v);
+  if (!t) {
     console.error(`实体类型必须是 ${ENTITY_TYPES.join(" / ")} 之一，收到：${v}`);
     process.exit(2);
   }
-  return v as EntityType;
+  return t;
 }
 
-/** 实体类型白名单检查（拆出来是为了让 parseEntityType 的意图一眼看清） */
-function isEntityType(v: string): boolean {
-  return (ENTITY_TYPES as readonly string[]).includes(v);
+/** 解析逗号分隔的多选 kind（非法项直接报错） */
+function parseKindsCsv(v: string | undefined): MemoryKind[] | undefined {
+  if (!v) return undefined;
+  const out: MemoryKind[] = [];
+  for (const part of v.split(",")) {
+    const t = part.trim();
+    if (t) out.push(parseKind(t)!);
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /** 取数字选项（非法值报错，不静默变 NaN） */
@@ -177,6 +204,38 @@ async function main(): Promise<void> {
     startServer(new Membrane({ dbPath, llm: llmFromEnv() }));
     return;
   }
+  if (cmd === "mcp-config") {
+    const { kv } = opts(argv.slice(1));
+    const clientId = positional(argv.slice(1));
+    if (!clientId) {
+      console.log("支持的客户端（用法：membrane-memory mcp-config <客户端id> [--out 文件]）：\n");
+      for (const c of MCP_CLIENTS) console.log(`  ${c.id.padEnd(16)} ${c.name}  → ${c.pathHint}`);
+      console.log("\n示例：membrane-memory mcp-config cursor --out .cursor/mcp.json");
+      return;
+    }
+    try {
+      const r = buildMcpConfig(clientId, { dbPath: kv.get("db"), nodePath: kv.get("node") });
+      const out = kv.get("out");
+      if (out) {
+        if (existsSync(out)) {
+          console.error(`目标已存在，拒绝覆盖（避免冲掉别人的 mcpServers）：${out}`);
+          process.exit(2);
+        }
+        const dir = dirname(out);
+        if (dir && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+        writeFileSync(out, r.content + "\n", "utf8");
+        console.log(`已写入：${out}`);
+      }
+      console.log(`\n【${r.client.name} · ${r.client.format.toUpperCase()}】`);
+      console.log(r.content);
+      console.log("\n落地步骤：");
+      r.steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(2);
+    }
+    return;
+  }
 
   const m = new Membrane({ dbPath, llm: llmFromEnv() });
   try {
@@ -194,6 +253,11 @@ async function main(): Promise<void> {
           subject: kv.get("subject"),
           subjectType: parseEntityType(kv.get("subject-type")),
           tags: kv.get("tags")?.split(",").map((s) => s.trim()).filter(Boolean),
+          entities: kv
+            .get("entities")
+            ?.split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
           pin: flags.has("pin"),
           source: "cli",
           namespace: kv.get("namespace"),
@@ -218,6 +282,8 @@ async function main(): Promise<void> {
         query,
         limit: numOpt(kv.get("limit")),
         asOf: numOpt(kv.get("as-of")),
+        kind: parseKind(kv.get("kind")),
+        kinds: parseKindsCsv(kv.get("kinds")),
         subject: kv.get("subject"),
         namespace: kv.get("namespace"),
         hops: numOpt(kv.get("hops")),
@@ -307,6 +373,7 @@ async function main(): Promise<void> {
       const rows = m.list({
         validity: kv.get("validity") === "all" ? "all" : "current",
         kind: parseKind(kv.get("kind")),
+        kinds: parseKindsCsv(kv.get("kinds")),
         subject: kv.get("subject"),
         namespace: kv.get("namespace"),
         limit: numOpt(kv.get("limit")),
@@ -320,8 +387,33 @@ async function main(): Promise<void> {
         `  总计 ${s.total} | 现行 ${s.current} | 被取代 ${s.superseded} | 已删 ${s.deleted} | 钉选 ${s.pinned}`,
       );
       console.log(`  分布 ${Object.entries(s.byKind).map(([k, v]) => `${k}=${v}`).join(" ")}`);
-      console.log(`  实体 ${m.listEntities().length} 个`);
+      console.log(`  实体 ${s.entities} 个 | 关系 ${s.relations} 条`);
       console.log(`  大小 ${(s.dbBytes / 1024).toFixed(1)} KB`);
+    } else if (cmd === "export") {
+      const { flags, kv } = opts(argv.slice(1));
+      const out =
+        kv.get("out") ??
+        join(
+          process.cwd(),
+          `membrane-backup-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.json`,
+        );
+      const bundle = m.exportAll({ includeEmbeddings: !flags.has("no-embeddings") });
+      writeFileSync(out, JSON.stringify(bundle, null, 2), "utf8");
+      console.log(`已导出：${out}`);
+      console.log(
+        `  记忆 ${bundle.memories.length} 条 | 证据 ${bundle.evidence.length} 条 | 实体 ${bundle.entities.length} 个 | 关系 ${bundle.relations.length} 条 | 向量 ${bundle.embeddings.length} 条`,
+      );
+    } else if (cmd === "import") {
+      const file = positional(argv.slice(1));
+      if (!file) {
+        console.error("用法：membrane-memory import 备份文件.json");
+        process.exit(2);
+      }
+      const bundle = JSON.parse(readFileSync(file, "utf8"));
+      const r = m.importAll(bundle);
+      console.log(
+        `导入完成：记忆 ${r.memories} 条（跳过已存在 ${r.skippedMemories} 条）| 实体 ${r.entities} 个 | 关系 ${r.relations} 条（跳过 ${r.skippedRelations} 条）| 向量 ${r.embeddings} 条（维度不符跳过 ${r.skippedEmbeddings} 条）`,
+      );
     } else if (cmd === "doctor") {
       const report = runDoctor();
       console.log(formatDoctorReport(report));

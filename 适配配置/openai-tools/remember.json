@@ -1,0 +1,20 @@
+{
+  "type": "function",
+  "function": {
+    "name": "membrane_remember",
+    "description": "把一条值得长期记住的事实/偏好/流程写进本地记忆库。相同内容会自动去重，冲突内容会自动取代旧版本。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string", "description": "要记住的内容，一句完整的话" },
+        "subject": { "type": "string", "description": "这句话描述谁/什么，例如 用户、张三、项目A" },
+        "kind": { "type": "string", "enum": ["fact", "episode", "preference", "procedure"] },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "namespace": { "type": "string", "description": "租户/项目隔离，默认 default" },
+        "pin": { "type": "boolean", "description": "固定，不被自动取代" }
+      },
+      "required": ["content"]
+    }
+  }
+}

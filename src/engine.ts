@@ -39,8 +39,10 @@ import type {
   ConflictPolicy,
   EntityInput,
   EntityType,
+  ExportBundle,
   GraphEntity,
   HistoryEntry,
+  ImportResult,
   LlmConfig,
   MembraneOptions,
   MembraneStats,
@@ -54,7 +56,7 @@ import type {
   RelationInput,
   RelationQueryOptions,
   RelationView,
-  ScoreBreakdown,
+  UpdateInput,
 } from "./types.js";
 
 /** 配置解析后的内部形态（权重/半衰期/策略都填了默认值） */
@@ -123,14 +125,6 @@ export function normalizeWeights(
   if (sum <= 0) return { text: 1, vec: 0, time: 0, conf: 0, graph: 0 };
   const k = 1 / sum;
   return { text: text * k, vec: vec * k, time: time * k, conf: conf * k, graph: graph * k };
-}
-
-/**
- * 无向量分量时重新归一化权重（v0.1 的公开 API，保留兼容）。
- * 等价于 normalizeWeights(w, { vec: false, graph: false })。
- */
-export function renormalizeWithoutVec(w: RecallWeights): RecallWeights {
-  return normalizeWeights(w, { vec: false, graph: false });
 }
 
 /**
@@ -245,32 +239,10 @@ export class Membrane {
 
     // 3) 向量预备：只校验维度一致性，真正落库在事务里
     const vec = normalizeVec(input.vec);
-    let embeddingStatus: "stored" | "skipped" | "none" = "none";
-    if (vec) {
-      const dims = this.storage.embeddingDims();
-      // 空库或同维度 → 正常存；库里有别的维度 → 存进去也永远余弦为 0，反而更难排查
-      embeddingStatus = dims.size === 0 || dims.has(vec.length) ? "stored" : "skipped";
-    }
+    const embeddingStatus = this.embeddingPlan(vec);
 
     // 4) 构造新记忆
-    const id = this.newId(at);
-    const rec: MemoryRecord = {
-      id,
-      kind: norm.kind,
-      content: norm.content,
-      subject: norm.subject,
-      tags: norm.tags,
-      confidence: norm.confidence,
-      source: norm.source,
-      namespace: ns,
-      createdAt: at,
-      updatedAt: at,
-      validFrom: norm.validFrom,
-      validTo: null,
-      supersededBy: null,
-      deleted: false,
-      pin: norm.pin,
-    };
+    const rec = this.buildRecord(norm, ns, at);
 
     const supersededList: MemoryRecord[] = [];
     const keptBothList: MemoryRecord[] = [];
@@ -280,11 +252,11 @@ export class Membrane {
 
     this.storage.transaction(() => {
       this.storage.insert(rec);
-      if (embeddingStatus === "stored" && vec) this.storage.upsertEmbedding(id, vec);
+      if (embeddingStatus === "stored" && vec) this.storage.upsertEmbedding(rec.id, vec);
       if (input.evidence && input.evidence.length > 0) {
-        this.storage.evidenceReplace(id, input.evidence, at);
+        this.storage.evidenceReplace(rec.id, input.evidence, at);
       }
-      relationViews = this.writeGraph(id, {
+      relationViews = this.writeGraph(rec.id, {
         content: norm.content,
         subject: norm.subject,
         subjectType: normalizeEntityType(input.subjectType),
@@ -294,7 +266,7 @@ export class Membrane {
         validFrom: norm.validFrom,
         at,
       });
-      this.storage.historyAppend(id, "add", at, {
+      this.storage.historyAppend(rec.id, "add", at, {
         kind: norm.kind,
         subject: norm.subject,
         source: norm.source,
@@ -302,7 +274,7 @@ export class Membrane {
         relations: relationViews.length,
         embedding: embeddingStatus,
       });
-      const applied = this.applyConflictPolicy(id, conflicts, at);
+      const applied = this.applyConflictPolicy(rec.id, conflicts, at);
       supersededList.push(...applied.superseded);
       keptBothList.push(...applied.keptBoth);
       status = applied.status;
@@ -324,6 +296,41 @@ export class Membrane {
       note,
       embeddingStatus,
       relations: relationViews,
+    };
+  }
+
+  /**
+   * 向量维度守卫：空库或同维度才落库；库里有别的维度就跳过。
+   * 混用两套 embedding 模型的向量余弦恒为 0，存进去只会让问题更难排查。
+   */
+  private embeddingPlan(vec: Float32Array | null): "stored" | "skipped" | "none" {
+    if (!vec) return "none";
+    const dims = this.storage.embeddingDims();
+    return dims.size === 0 || dims.has(vec.length) ? "stored" : "skipped";
+  }
+
+  /** 归一化入参 → 待入库记录（表字段与内存结构一一对应，改结构只需改这一处） */
+  private buildRecord(
+    norm: ReturnType<typeof normalizeAddInput>,
+    namespace: string,
+    at: number,
+  ): MemoryRecord {
+    return {
+      id: this.newId(at),
+      kind: norm.kind,
+      content: norm.content,
+      subject: norm.subject,
+      tags: norm.tags,
+      confidence: norm.confidence,
+      source: norm.source,
+      namespace,
+      createdAt: at,
+      updatedAt: at,
+      validFrom: norm.validFrom,
+      validTo: null,
+      supersededBy: null,
+      deleted: false,
+      pin: norm.pin,
     };
   }
 
@@ -375,9 +382,14 @@ export class Membrane {
         if (!fromName) {
           throw new MembraneError("E_RELATION", "关系缺少起点：请在 from 里写实体名，或给记忆一个 subject。");
         }
+        // 起点没显式给类型时，若它就是本条记忆的 subject，沿用 subjectType（少一次推断错误）
+        const declaredFromType = normalizeEntityType(r.fromType);
         pending.push({
           from: fromName,
-          fromType: normalizeEntityType(r.fromType) === "unknown" && fromName === ctx.subject ? ctx.subjectType : normalizeEntityType(r.fromType),
+          fromType:
+            declaredFromType === "unknown" && fromName === ctx.subject
+              ? ctx.subjectType
+              : declaredFromType,
           to: normalizeEntityName(r.to, "关系终点"),
           toType: normalizeEntityType(r.toType),
           predicate: normalizePredicate(r.predicate),
@@ -640,7 +652,9 @@ export class Membrane {
 
   /** 命名空间内全部实体（Dashboard / REST 展示用） */
   listEntities(namespace = "default", limit = 5000): GraphEntity[] {
-    return this.storage.listEntities(normalizeNamespace(namespace), limit);
+    // 显式归一：0/负数/超大值都不该把 SQL 的 LIMIT 变成意外行为
+    const safeLimit = Math.max(1, Math.min(5000, Math.floor(limit)));
+    return this.storage.listEntities(normalizeNamespace(namespace), safeLimit);
   }
 
   // ---------- 向量：异步写入 / 查询 / 回填 ----------
@@ -667,6 +681,136 @@ export class Membrane {
         ...r,
         embeddingStatus: "none",
         note: `${r.note} ⚠️ 向量计算失败（${err instanceof Error ? err.message : String(err)}），本次按纯全文写入。`,
+      };
+    }
+  }
+
+  /**
+   * 编辑一条现存记忆（**版本化更新**，不是原地改行）。
+   *
+   * 新版本写入后，旧版本被标记 superseded（valid_to=now）、它派生的关系一起关闭；
+   * 旧正文/证据/关系都留在库里，所以 `asOf(编辑前)` 仍能查到原样。
+   * 内容没变化时直接返回 duplicate，不制造无意义的历史版本。
+   */
+  update(id: string, input: UpdateInput): AddResult {
+    const old = this.storage.get(id);
+    if (!old) throw new MembraneError("E_NOT_FOUND", `记忆 ${id} 不存在。`);
+    if (old.deleted) throw new MembraneError("E_UPDATE_DELETED", `记忆 ${id} 已被遗忘，不能再编辑。`);
+    if (old.validTo !== null) {
+      throw new MembraneError("E_UPDATE_STALE", `记忆 ${id} 已被取代，请编辑现行版本（valid_to 非空）。`);
+    }
+
+    const at = this.now();
+    const norm = normalizeAddInput(
+      {
+        content: input.content ?? old.content,
+        kind: input.kind ?? old.kind,
+        subject: input.subject !== undefined ? input.subject : old.subject,
+        tags: input.tags ?? old.tags,
+        confidence: input.confidence ?? old.confidence,
+        source: input.source !== undefined ? input.source : old.source,
+        pin: input.pin ?? old.pin,
+        at,
+        validFrom: at,
+      },
+      { at, source: old.source },
+    );
+
+    // 内容与元数据都没变（也没给新证据/图/向量）→ 不制造新版本
+    const same =
+      contentKey(norm.content) === contentKey(old.content) &&
+      norm.kind === old.kind &&
+      norm.subject === old.subject &&
+      JSON.stringify(norm.tags) === JSON.stringify(old.tags) &&
+      norm.confidence === old.confidence &&
+      norm.pin === old.pin &&
+      input.evidence === undefined &&
+      input.entities === undefined &&
+      input.relations === undefined &&
+      !input.vec;
+    if (same) {
+      return {
+        status: "duplicate",
+        memory: old,
+        superseded: [],
+        keptBoth: [],
+        note: "内容没有变化，未创建新版本。",
+      };
+    }
+
+    // 正文没变时沿用旧向量（元数据编辑不该让向量失效）；正文变了必须重算或由调用方传入
+    const sameText = contentKey(norm.content) === contentKey(old.content);
+    const vec = normalizeVec(input.vec) ?? (sameText ? this.storage.getEmbedding(old.id) : null);
+    const embeddingStatus = this.embeddingPlan(vec);
+    const rec = this.buildRecord(norm, old.namespace, at);
+    const oldEvidence = input.evidence === undefined ? this.storage.evidenceFor(old.id) : null;
+
+    let relationViews: RelationView[] = [];
+    this.storage.transaction(() => {
+      this.storage.insert(rec);
+      if (embeddingStatus === "stored" && vec) this.storage.upsertEmbedding(rec.id, vec);
+      if (input.evidence !== undefined) {
+        this.storage.evidenceReplace(rec.id, input.evidence, at);
+      } else if (oldEvidence) {
+        for (const ev of oldEvidence) this.storage.appendEvidence(rec.id, ev.quote, ev.at);
+      }
+      relationViews = this.writeGraph(rec.id, {
+        content: norm.content,
+        subject: norm.subject,
+        subjectType: normalizeEntityType(input.subjectType),
+        entities: input.entities,
+        relations: input.relations,
+        namespace: old.namespace,
+        validFrom: norm.validFrom,
+        at,
+      });
+      this.storage.markSuperseded(old.id, rec.id, at);
+      this.storage.closeRelationsForMemory(old.id, at);
+      this.storage.historyAppend(rec.id, "add", at, {
+        kind: norm.kind,
+        subject: norm.subject,
+        source: norm.source,
+        evidenceCount: input.evidence?.length ?? oldEvidence?.length ?? 0,
+        relations: relationViews.length,
+        embedding: embeddingStatus,
+        editOf: old.id,
+      });
+      this.storage.historyAppend(old.id, "supersede", at, { by: rec.id, reason: "user-edit" });
+    });
+
+    return {
+      status: "created",
+      memory: rec,
+      superseded: [old],
+      keptBoth: [],
+      note: `已更新：旧版本 ${old.id} 被取代，历史仍可用 asOf 查到。`,
+      embeddingStatus,
+      relations: relationViews,
+    };
+  }
+
+  /**
+   * 编辑 + 自动算向量（异步版）。没配 embedding 模型时等价于 update()。
+   * 算向量失败不阻断编辑：按纯文本版本更新，note 里说明。
+   */
+  async updateAsync(
+    id: string,
+    input: UpdateInput,
+    opts: { injectFetch?: FetchLike; embed?: boolean } = {},
+  ): Promise<AddResult> {
+    if (input.vec || opts.embed === false || !this.llm?.embeddingModel) return this.update(id, input);
+    const old = this.storage.get(id);
+    if (!old) throw new MembraneError("E_NOT_FOUND", `记忆 ${id} 不存在。`);
+    const content = input.content ?? old.content;
+    try {
+      const vec = await embedText(this.llm, content, { injectFetch: opts.injectFetch });
+      return this.update(id, vec ? { ...input, vec } : input);
+    } catch (err) {
+      const r = this.update(id, input);
+      return {
+        ...r,
+        embeddingStatus: "none",
+        note: `${r.note} ⚠️ 向量计算失败（${err instanceof Error ? err.message : String(err)}），本次按纯全文更新。`,
       };
     }
   }
@@ -1213,7 +1357,8 @@ export class Membrane {
     const rrfGraph = rrfNormalized(gRank);
     const views = ctx.graphPaths.get(m.id) ?? null;
     const ageDays = (ctx.now - m.validFrom) / 86_400_000;
-    const hl = this.cfg.halfLives[m.kind];
+    // 脏数据守卫：库里出现过非法 kind 时不能算出 NaN 分（NaN 会让整条排序失去意义）
+    const hl = this.cfg.halfLives[m.kind] ?? DEFAULT_HALF_LIVES.fact;
     const fresh = freshness(ageDays, hl);
     const score =
       ctx.weights.text * rrfText +
@@ -1289,6 +1434,8 @@ export class Membrane {
       this.storage.deleteEmbedding(id);
       // 忘掉这条记忆，就从图里摘掉它派生出来的关系（否则"关系"会替它说话）
       this.storage.closeRelationsForMemory(id, at);
+      // 关联行也要清：实体本身留着（可能还被别的记忆引用），但"这条记忆提到谁"必须断干净
+      this.storage.deleteMemoryEntities(id);
       this.storage.historyAppend(id, "forget", at, { reason: "用户主动遗忘" });
     });
   }
@@ -1312,6 +1459,144 @@ export class Membrane {
   /** 库况速览 */
   stats(): MembraneStats {
     return this.storage.stats();
+  }
+
+  // ---------- 备份：导出 / 导入 ----------
+
+  /**
+   * 全量导出（JSON 友好）。
+   *
+   * 导的是"库的全部真相"：含被取代、已遗忘的底稿与已关闭的关系边——
+   * 只导现行记忆会让 asOf 历史查询在恢复后失灵。向量默认也带上，
+   * 断网恢复不用重新花钱 embed；嫌文件大可以 includeEmbeddings:false。
+   */
+  exportAll(opts: { includeEmbeddings?: boolean } = {}): ExportBundle {
+    const includeEmbeddings = opts.includeEmbeddings !== false;
+    return {
+      format: "membrane-backup",
+      version: 1,
+      exportedAt: this.now(),
+      memories: this.storage.allMemories(),
+      evidence: this.storage.allEvidence(),
+      entities: this.storage.allEntities(),
+      relations: this.storage.allRelations(),
+      memoryEntities: this.storage.allMemoryEntities(),
+      embeddings: includeEmbeddings
+        ? [...this.storage.getAllEmbeddings()].map(([id, vec]) => ({
+            id,
+            vec: Array.from(vec),
+          }))
+        : [],
+    };
+  }
+
+  /**
+   * 导入备份（**幂等、不覆盖**）：已存在的记忆/关系按 id 跳过，
+   * 所以同一份备份导入两次结果一致，也不会冲掉目标库里更新的数据。
+   *
+   * 实体按 (namespace, name) 复用：备份里的实体 id 与目标库不同时，
+   * 关系边会自动改指向目标库已有实体的 id（否则会插出一堆断边）。
+   */
+  importAll(bundle: ExportBundle): ImportResult {
+    if (!bundle || bundle.format !== "membrane-backup" || bundle.version !== 1) {
+      throw new MembraneError(
+        "E_IMPORT_FORMAT",
+        "不是 Membrane 备份文件（需要 format=membrane-backup、version=1）。",
+      );
+    }
+    // 先校验"给了的字段必须是数组"，再补缺省值——null 不能被 ?? 悄悄当成空数组
+    for (const field of ["memories", "evidence", "entities", "relations", "memoryEntities", "embeddings"] as const) {
+      const value = (bundle as unknown as Record<string, unknown>)[field];
+      if (value !== undefined && !Array.isArray(value)) {
+        throw new MembraneError("E_IMPORT_FORMAT", `备份字段 ${field} 不是数组，文件可能已损坏。`);
+      }
+    }
+    const memories = bundle.memories ?? [];
+    const evidence = bundle.evidence ?? [];
+    const entities = bundle.entities ?? [];
+    const relations = bundle.relations ?? [];
+    const memoryEntities = bundle.memoryEntities ?? [];
+    const embeddings = bundle.embeddings ?? [];
+
+    const result: ImportResult = {
+      memories: 0,
+      entities: 0,
+      relations: 0,
+      embeddings: 0,
+      skippedMemories: 0,
+      skippedRelations: 0,
+      skippedEmbeddings: 0,
+    };
+    const importedMemoryIds = new Set<string>();
+    const entityIdMap = new Map<string, string>();
+    let dims = this.storage.embeddingDims();
+
+    this.storage.transaction(() => {
+      for (const rec of memories) {
+        if (!rec || typeof rec.id !== "string" || typeof rec.content !== "string") {
+          throw new MembraneError("E_IMPORT_FORMAT", "备份里有记忆缺少 id 或 content，拒绝半截导入。");
+        }
+        if (this.storage.get(rec.id)) {
+          result.skippedMemories++;
+          continue;
+        }
+        this.storage.insert(rec);
+        importedMemoryIds.add(rec.id);
+        result.memories++;
+      }
+
+      // 证据按原观察时刻逐条还原（不能压成一个时间戳，否则"证据先后"就丢了）
+      for (const e of evidence) {
+        if (!e || !importedMemoryIds.has(e.memoryId)) continue;
+        if (typeof e.quote === "string") this.storage.appendEvidence(e.memoryId, e.quote, Number(e.at) || 0);
+      }
+
+      for (const ent of entities) {
+        if (!ent || typeof ent.name !== "string" || typeof ent.id !== "string") continue;
+        const ns = ent.namespace ?? "default";
+        const existing = this.storage.getEntityByName(ent.name, ns);
+        if (existing) {
+          entityIdMap.set(ent.id, existing.id);
+          continue;
+        }
+        this.storage.insertEntity({ ...ent, namespace: ns });
+        entityIdMap.set(ent.id, ent.id);
+        result.entities++;
+      }
+
+      for (const rel of relations) {
+        if (!rel || typeof rel.id !== "string") continue;
+        if (this.storage.hasRelation(rel.id)) {
+          result.skippedRelations++;
+          continue;
+        }
+        const fromId = entityIdMap.get(rel.fromId);
+        const toId = entityIdMap.get(rel.toId);
+        if (!fromId || !toId) continue; // 端点实体缺失：宁可不导，也不插断边
+        this.storage.insertRelation({ ...rel, fromId, toId });
+        result.relations++;
+      }
+
+      for (const link of memoryEntities) {
+        if (!link || !importedMemoryIds.has(link.memoryId)) continue;
+        const entityId = entityIdMap.get(link.entityId);
+        if (entityId) this.storage.linkMemoryEntity(link.memoryId, entityId);
+      }
+
+      for (const emb of embeddings) {
+        if (!emb || !importedMemoryIds.has(emb.id) || !Array.isArray(emb.vec)) continue;
+        const vec = new Float32Array(emb.vec.filter((x): x is number => Number.isFinite(x)));
+        if (vec.length === 0) continue;
+        if (dims.size > 0 && !dims.has(vec.length)) {
+          result.skippedEmbeddings++;
+          continue;
+        }
+        this.storage.upsertEmbedding(emb.id, vec);
+        dims = new Map([...dims, [vec.length, (dims.get(vec.length) ?? 0) + 1]]);
+        result.embeddings++;
+      }
+    });
+    return result;
   }
 
   /** 列出记忆（转发 Storage） */

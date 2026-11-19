@@ -13,8 +13,6 @@
  * 全部失效——这是 FTS 注入无害化的第一道防线（另有专项测试）。
  */
 
-/** CJK 区段：CJK 部首扩展~兼容表意、假名、谚文等（覆盖中日韩常用文字） */
-const CJK_RUN = /[\u2E80-\u2EFF\u3000-\u303F\u3040-\u30FF\u3100-\u312F\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]+/;
 /** 从文本里切出"连续 CJK 段"或"拉丁/数字/下划线词" */
 const RUN_SPLIT = /([\u2E80-\u2EFF\u3000-\u303F\u3040-\u30FF\u3100-\u312F\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]+)|([A-Za-z0-9_]+)/g;
 
@@ -121,13 +119,5 @@ export function charScore(queryUnits: Set<string>, text: string): number {
   let hit = 0;
   for (const u of queryUnits) if (textUnits.has(u)) hit++;
   return hit / queryUnits.size;
-}
-
-/**
- * 字符覆盖率（便捷版：单次比较用）。
- * 批量场景请用 fuzzyUnits + charScore，避免重复解析查询。
- */
-export function charCoverage(query: string, text: string): number {
-  return charScore(fuzzyUnits(query), text);
 }
 

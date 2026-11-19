@@ -1,0 +1,10 @@
+node_modules
+dist
+data
+reports
+.git
+.github
+*.db
+*.db-shm
+*.db-wal
+.audit

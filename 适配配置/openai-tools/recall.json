@@ -1,0 +1,24 @@
+{
+  "type": "function",
+  "function": {
+    "name": "membrane_recall",
+    "description": "从本地记忆库召回与当前问题相关的记忆。返回按相关性排序的结果，并附带 why / 分数明细（full 模式）。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "自然语言查询，例如 用户住在哪" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 8 },
+        "kind": { "type": "string", "enum": ["fact", "episode", "preference", "procedure"] },
+        "namespace": { "type": "string" },
+        "asOf": { "type": "integer", "description": "历史时点（Unix 毫秒），不填=只看现行记忆" },
+        "detail": {
+          "type": "string",
+          "enum": ["ultra", "brief", "full"],
+          "default": "brief",
+          "description": "ultra 最省 token（仅 id/内容/分数）；brief 日常；full 带完整解释"
+        }
+      },
+      "required": ["query"]
+    }
+  }
+}

@@ -12,9 +12,20 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname, resolve, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Membrane } from "./engine.js";
+import { Membrane, toBrief, toUltraBrief } from "./engine.js";
 import { MembraneError } from "./model.js";
-import type { EntityType, MemoryKind, RelationInput } from "./types.js";
+import {
+  asBoolean,
+  asEntityInputs,
+  asEntityType,
+  asFiniteNumber,
+  asKind,
+  asNumberArray,
+  asRelationInputs,
+  asString,
+  asStringArray,
+} from "./input.js";
+import type { MemoryKind } from "./types.js";
 
 export interface ServerOptions {
   port?: number;
@@ -72,11 +83,6 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
-/** 从请求体解析 kind（非法值当未指定，交给引擎用默认 fact） */
-function parseKind(v: unknown): MemoryKind | undefined {
-  return v === "fact" || v === "episode" || v === "preference" || v === "procedure" ? v : undefined;
-}
-
 /**
  * 常量时间字符串比较（防时序侧信道）。
  * 长度不同时也不早退——用固定次数累积差异，最后统一判长度与内容。
@@ -90,44 +96,20 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-/** 从请求体取字符串数组（非字符串项丢弃） */
-function strList(v: unknown): string[] | undefined {
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
-}
-
-/** GET 的 query 参数是字符串，POST 的是数字——统一取数（非法值返回 undefined） */
-function num(v: unknown): number | undefined {
-  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
-  return Number.isFinite(n) ? n : undefined;
-}
-
-/** 解析实体类型（非法当未指定） */
-function parseEntityType(v: unknown): EntityType | undefined {
-  return v === "person" || v === "place" || v === "org" || v === "concept" || v === "unknown"
-    ? v
-    : undefined;
-}
-
-/** 解析手动标注的关系数组（脏项丢弃，不因为一条写错拒掉整条记忆） */
-function parseRelations(v: unknown): RelationInput[] | undefined {
-  if (!Array.isArray(v)) return undefined;
-  const out: RelationInput[] = [];
-  for (const raw of v) {
-    if (!raw || typeof raw !== "object") continue;
-    const o = raw as Record<string, unknown>;
-    const to = typeof o["to"] === "string" ? o["to"] : "";
-    const predicate = typeof o["predicate"] === "string" ? o["predicate"] : "";
-    if (!to || !predicate) continue;
-    out.push({
-      from: typeof o["from"] === "string" ? o["from"] : null,
-      fromType: parseEntityType(o["fromType"]),
-      to,
-      toType: parseEntityType(o["toType"]),
-      predicate,
-      confidence: num(o["confidence"]),
-    });
+/** GET query 里的多值/CSV：`?kinds=fact,episode` 或 `?kinds=fact&kinds=episode`（后者只留最后一个） */
+function asKindsCsv(v: unknown): MemoryKind[] | undefined {
+  if (Array.isArray(v)) {
+    const out = v.map((x) => asKind(x)).filter((x): x is MemoryKind => x !== undefined);
+    return out.length > 0 ? out : undefined;
   }
-  return out.length > 0 ? out : undefined;
+  if (typeof v === "string") {
+    const out = v
+      .split(",")
+      .map((s) => asKind(s.trim()))
+      .filter((x): x is MemoryKind => x !== undefined);
+    return out.length > 0 ? out : undefined;
+  }
+  return undefined;
 }
 
 const MIME: Record<string, string> = {
@@ -172,55 +154,72 @@ export async function route(
     return { body: engine.stats() };
   }
   if (method === "GET" && urlPath === "/api/health") {
-    return { body: { ok: true, service: "membrane-memory", db: engine.storage.path } };
+    return {
+      body: { ok: true, service: "membrane-memory", version: "0.2.1", db: engine.storage.path },
+    };
+  }
+  if (method === "GET" && urlPath === "/api/export") {
+    // Dashboard 的"导出备份"按钮走这里；默认带向量，?noEmbeddings=1 可省
+    const includeEmbeddings = asString(body.noEmbeddings) !== "1";
+    return { status: 200, body: engine.exportAll({ includeEmbeddings }) };
   }
   if (method === "GET" && urlPath === "/api/memories") {
-    const validity = typeof body.validity === "string" ? body.validity : "current";
-    const kind = parseKind(body.kind);
-    const limit = typeof body.limit === "number" ? body.limit : undefined;
-    const namespace = typeof body.namespace === "string" ? body.namespace : undefined;
-    return { body: engine.list({ validity: validity === "all" ? "all" : "current", kind, limit, namespace }) };
+    const validity = asString(body.validity) === "all" ? "all" : "current";
+    return {
+      body: engine.list({
+        validity,
+        kind: asKind(body.kind),
+        kinds: asKindsCsv(body.kinds),
+        // GET 的 query 全是字符串：以前这里判 typeof === "number"，导致 ?limit= 永远失效
+        limit: asFiniteNumber(body.limit),
+        namespace: asString(body.namespace),
+      }),
+    };
   }
   if (method === "POST" && urlPath === "/api/recall") {
-    const query = typeof body.query === "string" ? body.query : "";
+    const query = asString(body.query) ?? "";
     if (!query) return { status: 400, body: { error: "query 必填" } };
     const hits = await engine.recallAsync({
       query,
-      limit: typeof body.limit === "number" ? body.limit : undefined,
-      asOf: typeof body.asOf === "number" ? body.asOf : undefined,
-      kind: parseKind(body.kind),
-      subject: typeof body.subject === "string" ? body.subject : undefined,
-      namespace: typeof body.namespace === "string" ? body.namespace : undefined,
-      entities: strList(body.entities),
-      hops: typeof body.hops === "number" ? body.hops : undefined,
+      limit: asFiniteNumber(body.limit),
+      asOf: asFiniteNumber(body.asOf),
+      kind: asKind(body.kind),
+      kinds: asKindsCsv(body.kinds),
+      subject: asString(body.subject),
+      namespace: asString(body.namespace),
+      entities: asStringArray(body.entities),
+      hops: asFiniteNumber(body.hops),
       noGraph: body.noGraph === true,
     });
+    const detail = asString(body.detail) ?? "full";
+    if (detail === "ultra") {
+      return { body: { results: hits.map(toUltraBrief), count: hits.length } };
+    }
+    if (detail === "brief") {
+      return { body: { results: hits.map(toBrief), count: hits.length } };
+    }
     return { body: { results: hits, count: hits.length } };
   }
   if (method === "POST" && urlPath === "/api/memories") {
-    const content = typeof body.content === "string" ? body.content : "";
+    const content = asString(body.content) ?? "";
     if (!content) return { status: 400, body: { error: "content 必填" } };
     // 向量既可以直接传（embedding 数组），也可以让服务端调 embedding 端点算（配了 model 时默认算）
-    const embedding = Array.isArray(body.embedding) ? body.embedding : undefined;
-    const entities = [
-      ...(strList(body.entities) ?? []),
-    ];
-    const relations = parseRelations(body.relations);
     const r = await engine.addAsync(
       {
         content,
-        kind: parseKind(body.kind),
-        subject: typeof body.subject === "string" ? body.subject : undefined,
-        subjectType: parseEntityType(body.subjectType),
-        tags: strList(body.tags),
-        confidence: typeof body.confidence === "number" ? body.confidence : undefined,
+        kind: asKind(body.kind),
+        subject: asString(body.subject),
+        subjectType: asEntityType(body.subjectType),
+        tags: asStringArray(body.tags),
+        confidence: asFiniteNumber(body.confidence),
         pin: body.pin === true,
-        evidence: strList(body.evidence),
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
-        source: typeof body.source === "string" ? body.source : "rest",
-        vec: embedding as number[] | undefined,
-        entities: entities.length > 0 ? entities : undefined,
-        relations,
+        evidence: asStringArray(body.evidence),
+        namespace: asString(body.namespace),
+        source: asString(body.source) ?? "rest",
+        vec: asNumberArray(body.embedding),
+        // 支持 ["李四", {name:"腾讯", type:"org"}] 两种写法（与 MCP 对齐）
+        entities: asEntityInputs(body.entities),
+        relations: asRelationInputs(body.relations),
       },
       { embed: body.embed === false ? false : undefined },
     );
@@ -229,43 +228,43 @@ export async function route(
 
   // ---- 图检索 ----
   if (method === "GET" && urlPath === "/api/relations") {
-    const a = typeof body.a === "string" ? body.a : typeof body.from === "string" ? body.from : "";
+    const a = asString(body.a) ?? asString(body.from) ?? "";
     if (!a) return { status: 400, body: { error: "a（或 from）必填" } };
-    const b = typeof body.b === "string" ? body.b : typeof body.to === "string" ? body.to : null;
+    const b = asString(body.b) ?? asString(body.to) ?? null;
     return {
       body: {
         relations: engine.relations(a, b, {
-          asOf: num(body.asOf),
-          maxHops: num(body.maxHops),
-          limit: num(body.limit),
-          namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+          asOf: asFiniteNumber(body.asOf),
+          maxHops: asFiniteNumber(body.maxHops),
+          limit: asFiniteNumber(body.limit),
+          namespace: asString(body.namespace),
         }),
       },
     };
   }
   if (method === "POST" && urlPath === "/api/relations") {
-    const from = typeof body.from === "string" ? body.from : "";
-    const to = typeof body.to === "string" ? body.to : "";
-    const predicate = typeof body.predicate === "string" ? body.predicate : "";
+    const from = asString(body.from) ?? "";
+    const to = asString(body.to) ?? "";
+    const predicate = asString(body.predicate) ?? "";
     if (!from || !to || !predicate) {
       return { status: 400, body: { error: "from / to / predicate 都必填" } };
     }
     const rel = engine.link({
       from,
-      fromType: parseEntityType(body.fromType),
+      fromType: asEntityType(body.fromType),
       to,
-      toType: parseEntityType(body.toType),
+      toType: asEntityType(body.toType),
       predicate,
-      confidence: typeof body.confidence === "number" ? body.confidence : undefined,
-      memoryId: typeof body.memoryId === "string" ? body.memoryId : null,
-      namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+      confidence: asFiniteNumber(body.confidence),
+      memoryId: asString(body.memoryId) ?? null,
+      namespace: asString(body.namespace),
     });
     return { status: 201, body: rel };
   }
   if (method === "GET" && urlPath === "/api/entities") {
-    const ns = typeof body.namespace === "string" ? body.namespace : undefined;
-    const limit = num(body.limit);
-    const memoryId = typeof body.memoryId === "string" ? body.memoryId : undefined;
+    const ns = asString(body.namespace);
+    const limit = asFiniteNumber(body.limit);
+    const memoryId = asString(body.memoryId);
     return {
       body: {
         entities: memoryId ? engine.entitiesFor(memoryId) : engine.listEntities(ns, limit),
@@ -293,6 +292,33 @@ export async function route(
   if (method === "POST" && mForget) {
     engine.forget(decodeURIComponent(mForget[1]!));
     return { body: { ok: true } };
+  }
+  const mEdit = urlPath.match(/^\/api\/memories\/([^/]+)$/);
+  if ((method === "PATCH" || method === "PUT") && mEdit) {
+    const r = await engine.updateAsync(
+      decodeURIComponent(mEdit[1]!),
+      {
+        content: asString(body.content),
+        kind: asKind(body.kind),
+        // subject 显式传 null = 清空主语；不传 = 沿用旧值
+        subject: body.subject === null ? null : asString(body.subject),
+        tags: asStringArray(body.tags),
+        confidence: asFiniteNumber(body.confidence),
+        source: body.source === null ? null : asString(body.source),
+        pin: asBoolean(body.pin),
+        evidence: asStringArray(body.evidence),
+        entities: asEntityInputs(body.entities),
+        relations: asRelationInputs(body.relations),
+        subjectType: asEntityType(body.subjectType),
+        vec: asNumberArray(body.embedding),
+      },
+      { embed: body.embed === false ? false : undefined },
+    );
+    return { status: 200, body: r };
+  }
+  if (method === "DELETE" && mEdit) {
+    engine.forget(decodeURIComponent(mEdit[1]!));
+    return { status: 200, body: { ok: true, id: decodeURIComponent(mEdit[1]!) } };
   }
   const mGet = urlPath.match(/^\/api\/memories\/([^/]+)$/);
   if (method === "GET" && mGet) {
@@ -338,7 +364,9 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
         const u = new URL(req.url ?? "/", `http://${host}`);
         const query: Record<string, unknown> = {};
         u.searchParams.forEach((v, k) => (query[k] = v));
-        const body = req.method === "POST" ? await readBody(req) : query;
+        // PATCH/PUT 也带 JSON body；之前只读 POST，导致真实 HTTP 编辑时内容被当成空对象
+        const hasBody = req.method === "POST" || req.method === "PATCH" || req.method === "PUT";
+        const body = hasBody ? await readBody(req) : query;
         const result = await route(engine, req.method ?? "GET", u.pathname, body, webDir);
         const b = result.body as { __file?: string };
         if (b && typeof b === "object" && "__file" in b) {

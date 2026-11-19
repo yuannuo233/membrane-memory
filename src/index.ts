@@ -37,6 +37,8 @@ export { extractGraph, cleanEntityName, inferEntityType } from "./graph-extract.
 export type { RuleEntity, RuleRelation } from "./graph-extract.js";
 export { startServer, route } from "./server.js";
 export type { ServerOptions } from "./server.js";
+export { buildMcpConfig, MCP_CLIENTS } from "./mcp-config.js";
+export type { McpClientId, McpClientSpec, McpConfigFormat, McpConfigOptions, McpConfigResult } from "./mcp-config.js";
 export { handleLine } from "./mcp.js";
 export { runDoctor, formatDoctorReport, writeDoctorReport } from "./doctor.js";
 export type { DoctorReport } from "./doctor.js";

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Doctor 自检（DESIGN.md 第 8 节）——把"数字可复现"落成可执行脚本。
  *
  * 三套剧本，全部确定性（注入固定时钟 + 内存库 + 固定数据）：
@@ -246,7 +246,7 @@ export function runDoctor(dbPath?: string): DoctorReport {
     { name: "图检索：两跳可达 + 图路参与打分", pass: graph.multiHopEdges >= 2 && graph.graphScoreApplied, detail: `两跳 ${graph.multiHopEdges} 边 / rrfGraph ${graph.graphScoreApplied ? ">0" : "0"}` },
   ];
   return {
-    version: "0.2.0",
+    version: "0.2.1",
     generatedAt: new Date(T0).toISOString(),
     deterministic: true,
     scenarios: { writeRecall, staleUpdate, crossSession, vector, graph },

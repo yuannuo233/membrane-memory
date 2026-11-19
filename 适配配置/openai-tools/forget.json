@@ -1,0 +1,14 @@
+{
+  "type": "function",
+  "function": {
+    "name": "membrane_forget",
+    "description": "软删除一条记忆（墓碑）。数据不会物理消失，历史快照仍可查到，便于审计与撤回。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "记忆 ULID" }
+      },
+      "required": ["id"]
+    }
+  }
+}

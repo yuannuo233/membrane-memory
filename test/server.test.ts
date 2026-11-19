@@ -4,10 +4,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Membrane } from "../src/engine.js";
-import { route } from "../src/server.js";
+import { route, startServer } from "../src/server.js";
 import { BASE_TIME, newTmpDir, rmDir } from "./helpers.js";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 
 let dir: string;
 let m: Membrane;
@@ -31,7 +33,7 @@ async function r(method: string, path: string, body: Record<string, unknown> = {
 describe("REST API", () => {
   it("health 返回服务信息", async () => {
     const res = await r("GET", "/api/health");
-    expect(res.body).toMatchObject({ ok: true, service: "membrane-memory" });
+    expect(res.body).toMatchObject({ ok: true, service: "membrane-memory", version: "0.2.1" });
   });
 
   it("空库 stats 全 0", async () => {
@@ -53,6 +55,92 @@ describe("REST API", () => {
 
   it("缺 content 返回 400", async () => {
     expect((await r("POST", "/api/memories", {})).status).toBe(400);
+  });
+
+  it("GET /api/memories 的 limit 对 query 字符串生效（回归：以前 typeof number 判断永远失效）", async () => {
+    await r("POST", "/api/memories", { content: "第一条记忆" });
+    await r("POST", "/api/memories", { content: "第二条记忆" });
+    const res = await r("GET", "/api/memories", { limit: "1" });
+    expect((res.body as unknown[]).length).toBe(1);
+    // mem0 兼容路径复用同一处理，一起生效
+    const v1 = await r("GET", "/v1/memories", { limit: "1" });
+    expect((v1.body as unknown[]).length).toBe(1);
+  });
+
+  it("POST /api/recall 支持 kinds 与 detail=brief", async () => {
+    await r("POST", "/api/memories", { content: "用户喜欢喝绿茶", subject: "用户", kind: "preference" });
+    await r("POST", "/api/memories", { content: "用户住在北京", subject: "用户", kind: "fact" });
+    const res = await r("POST", "/api/recall", { query: "用户", kinds: ["preference"], detail: "brief" });
+    const results = (res.body as { results: Record<string, unknown>[] }).results;
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every((x) => x["kind"] === "preference")).toBe(true);
+    expect(results.every((x) => !("breakdown" in x))).toBe(true); // brief 不带分数明细
+  });
+
+  it("POST /api/memories 接受 {name,type} 实体对象（与 MCP/SDK 对齐）", async () => {
+    const add = await r("POST", "/api/memories", {
+      content: "张三是李四的同学",
+      subject: "张三",
+      entities: [{ name: "李四", type: "person" }],
+    });
+    const id = (add.body as { memory: { id: string } }).memory.id;
+    const ents = await r("GET", "/api/entities", { memoryId: id });
+    const list = (ents.body as { entities: { name: string; type: string }[] }).entities;
+    const li = list.find((e) => e.name === "李四");
+    expect(li).toBeDefined();
+    expect(li!.type).toBe("person");
+  });
+
+  it("PATCH 编辑记忆：返回新版本，旧版本被取代", async () => {
+    const add = await r("POST", "/api/memories", { content: "用户住在北京", subject: "用户" });
+    const oldId = (add.body as { memory: { id: string } }).memory.id;
+    const edit = await r("PATCH", `/api/memories/${oldId}`, { content: "用户住在上海" });
+    const body = edit.body as { status: string; memory: { id: string; content: string }; superseded: { id: string }[] };
+    expect(edit.status).toBe(200);
+    expect(body.status).toBe("created");
+    expect(body.memory.content).toBe("用户住在上海");
+    expect(body.superseded[0]!.id).toBe(oldId);
+    const old = await r("GET", `/api/memories/${oldId}`);
+    expect((old.body as { validTo: number | null }).validTo).not.toBeNull();
+  });
+
+  it("DELETE 遗忘记忆（REST 语义便捷版）", async () => {
+    const add = await r("POST", "/api/memories", { content: "要删除的记忆" });
+    const id = (add.body as { memory: { id: string } }).memory.id;
+    const del = await r("DELETE", `/api/memories/${id}`);
+    expect(del.status).toBe(200);
+    const got = await r("GET", `/api/memories/${id}`);
+    expect((got.body as { deleted: boolean }).deleted).toBe(true);
+  });
+
+  it("GET /api/export 导出完整备份（含记忆与实体）", async () => {
+    await r("POST", "/api/memories", { content: "用户住在北京", subject: "用户" });
+    const res = await r("GET", "/api/export");
+    const bundle = res.body as { format: string; memories: unknown[]; entities: unknown[] };
+    expect(bundle.format).toBe("membrane-backup");
+    expect(bundle.memories.length).toBeGreaterThan(0);
+    expect(bundle.entities.length).toBeGreaterThan(0);
+  });
+
+  it("真实 HTTP PATCH 能读到 JSON body（防回归：只读 POST 的坑）", async () => {
+    const add = await r("POST", "/api/memories", { content: "用户住在北京", subject: "用户" });
+    const oldId = (add.body as { memory: { id: string } }).memory.id;
+    const srv = startServer(m, { port: 0, webDir });
+    await once(srv, "listening");
+    const port = (srv.address() as AddressInfo).port;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/memories/${oldId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "用户住在上海（HTTP）" }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { status: string; memory: { content: string } };
+      expect(body.status).toBe("created");
+      expect(body.memory.content).toContain("上海");
+    } finally {
+      srv.close();
+    }
   });
 
   it("审计链端点返回 add 记录", async () => {

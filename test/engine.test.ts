@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Membrane, cosine, rrfNormalized, freshness, toBrief, toUltraBrief } from "../src/engine.js";
-import { charCoverage } from "../src/tokenize.js";
+import { charScore, fuzzyUnits } from "../src/tokenize.js";
 import { MembraneError } from "../src/model.js";
 import { BASE_TIME, newTmpDir, rmDir } from "./helpers.js";
 
@@ -115,10 +115,11 @@ describe("Membrane.add：去重与冲突", () => {
 });
 
 describe("read-path resolver：字符覆盖率兜底", () => {
-  it("charCoverage：隔字查询也能算覆盖率，拉丁按整词", () => {
-    expect(charCoverage("养猫", "用户养了一只猫")).toBe(1); // 养/猫 都在
-    expect(charCoverage("zzzz", "用户养了一只猫")).toBe(0); // 拉丁词无匹配
-    expect(charCoverage("北京", "养了一只猫")).toBe(0);
+  it("charScore：隔字查询也能算覆盖率，拉丁按整词", () => {
+    const units = fuzzyUnits("养猫");
+    expect(charScore(units, "用户养了一只猫")).toBe(1); // 养/猫 都在
+    expect(charScore(fuzzyUnits("zzzz"), "用户养了一只猫")).toBe(0); // 拉丁词无匹配
+    expect(charScore(fuzzyUnits("北京"), "养了一只猫")).toBe(0);
   });
 
   it("FTS 未连续命中时，模糊召回兜底（养猫 → 用户养了一只猫）", () => {

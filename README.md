@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 # Membrane 记忆脑 🧠
 
@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md#10-依赖白名单新增依赖需在此登记)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **时间感知、本地优先、可解释的 Agent 记忆引擎。**
@@ -23,7 +23,7 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 > 一句话：给 AI Agent 一个**过目不忘、还会告诉你"为什么想起这条"**的记忆脑。
 > 装上就能用——不联网、不下模型、不要 API key、零原生依赖。
 
-> 🔴 **诚实声明（请先读）**：这是 v0.2 早期项目，单人开发、175 个测试（CI 实时验证）、**尚无真实用户验证**。
+> 🔴 **诚实声明（请先读）**：这是 v0.2 早期项目，单人开发、201 个测试（CI 实时验证）、**尚无真实用户验证**。
 > 下方「[已知局限](#已知局限别踩坑)」把我们所有短板逐条写明了，建议先看完再决定用不用。
 > 我们不做"benchmark 刷到第一"的宣传——更看重数字能被你自己复现。
 
@@ -48,7 +48,7 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 
 | 项目 | 现状 | 风险 |
 |---|---|---|
-| **没有真实用户验证** | 175 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
+| **没有真实用户验证** | 201 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
 | **跨进程并发只有 WAL 兜底** | SQLite 单写者模型，多进程同时写会排队 | 个人用没问题；高并发场景会成瓶颈 |
 | **性能只测到 1000 条** | 1000 条写入/查询在秒级 | 10 万条以上未压测，可能变慢 |
 | **doctor 样本很小** | 召回 5 条 / 更新 8 组 | **是回归自检，不是 benchmark**，不能作为跨项目横向比较的依据 |
@@ -95,7 +95,7 @@ Agent 记忆领域已有不少成熟项目。Membrane 选择了一个不同的�
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # 只装开发依赖（typescript/vitest/tsx），运行时依赖只有 ulid
-npm test           # 全部通过（当前 175 个用例）
+npm test           # 全部通过（当前 201 个用例）
 npm run build
 node dist/cli.js doctor    # 应该全部通过
 ```
@@ -108,7 +108,7 @@ node dist/cli.js doctor    # 应该全部通过
 `membrane-memory-x.y.z.tgz`，然后：
 
 ```bash
-npm install -g ./membrane-memory-0.2.0.tgz
+npm install -g ./membrane-memory-0.2.1.tgz
 membrane-memory doctor
 ```
 
@@ -212,6 +212,8 @@ set MEMBRANE_EMBED_MODEL=text-embedding-3-small
 membrane-memory add "用户住在北京" --subject 用户   # 自动算向量
 membrane-memory search "他老家在哪"                # 查询向量 + 全文 一起融合
 membrane-memory embed-backfill                     # 老库一次性回填（分批，内存可控）
+membrane-memory export --out backup.json           # 备份全部记忆/证据/关系/向量
+membrane-memory import backup.json                 # 换机器/换库后恢复
 ```
 
 也可以完全绕过网络：`add({ vec })` 传预算好的向量，`recall({ queryVec })` 传查询向量。
@@ -267,9 +269,53 @@ m.recall({ query: "用户喜欢什么", detail: "full" });     // 只在调试�
 | 门 | 命令 | 说明 |
 |---|---|---|
 | SDK | `import { Membrane }` | ESM + 完整 TypeScript 类型 |
-| CLI | `add / search / relations / link / entities / embed-backfill / list / stats / mcp / serve / doctor` | 命令行全覆盖 |
+| CLI | `add / search / relations / link / entities / embed-backfill / list / stats / export / import / mcp-config / mcp / serve / doctor` | 命令行全覆盖 |
 | MCP | `membrane-memory mcp` | stdio，10 工具，接入所有 Agent 工具 |
 | REST | `membrane-memory serve` | mem0 兼容子集（`/v1/memories`）+ Web 控制台，默认 127.0.0.1 |
+
+> 不想手写接入配置？`membrane-memory mcp-config <客户端>` 直接生成（21 个客户端，node/数据库路径自动填好）。
+> 每个场景怎么配、怎么调、别怎么用，见 **[使用场景.md](使用场景.md)**。
+> 非 MCP 生态（OpenAI Function Calling / LangChain / Dify HTTP / 自写 Agent）见
+> **[适配配置/REST与SDK接入.md](适配配置/REST与SDK接入.md)**，含四份 function schema 与 Node/Python 零依赖客户端。
+
+### Web 控制台：能看、能改、能忘
+
+`membrane-memory serve` 后打开 `http://127.0.0.1:8317`（或双击 `启动控制台.bat`）：
+
+- **三档 Token 模式**（顶栏切换，刷新后记得）：省 Token（`ultra` + 3 条）/ 平衡（`brief` + 8 条）/ 完整（`full` + 8 条）
+- **记忆详情**：正文、状态、时间区间、标签、实体、关系、证据、完整审计链
+- **编辑**：改正文/类型/主语/置信度/标签/pin，保存为**新版本**，旧版本进历史（不会原地覆盖）
+- **遗忘**：软删除，墓碑仍可查；台账可筛选 namespace / kind / 是否含历史版本
+- **导出备份**：一键下载完整 JSON（含向量，可 `import` 恢复）
+
+对应的 REST 编辑接口：`PATCH|PUT /api/memories/:id`、`DELETE /api/memories/:id`。
+控制台只监听本机；要远程访问必须设 `MEMBRANE_TOKEN`。
+
+### 备份与恢复：一个 JSON 文件就是全部
+
+```bash
+membrane-memory export                        # 默认导出到当前目录 membrane-backup-<时间>.json
+membrane-memory export --out 我的备份.json --no-embeddings
+membrane-memory import 我的备份.json          # 按 id 去重，不覆盖目标库现有数据
+```
+
+导的是**库的全部真相**：含被取代、已遗忘的底稿、证据、实体关系与向量，
+所以恢复之后 `asOf` 历史查询照样能查。SDK 里是 `exportAll()` / `importAll(bundle)`。
+导入是幂等的——同一份备份导两次，第二次全部跳过；实体按 `(namespace, name)` 复用，
+不会因为两边 id 不同就插出一堆断边。
+
+### Docker（可选）
+
+```bash
+docker build -t membrane-memory .
+docker run -d --name membrane -p 8317:8317 \
+  -v membrane_data:/data \
+  -e MEMBRANE_TOKEN=change-me \
+  membrane-memory
+```
+
+数据落在 `/data/membrane.db` 这个 volume 里；镜像基于 Node 24，多阶段构建，运行时不带编译器。
+不设 `MEMBRANE_TOKEN` 时服务只监听容器内网，端口映射到宿主机前请先设 token。
 
 ---
 
@@ -279,7 +325,7 @@ README 里的数字全部来自 `membrane-memory doctor`——**换台机器跑�
 
 ```
 ╔══════════════════════════════════════════════╗
-║   Membrane Doctor · 可复现自检报告 v0.2.0      ║
+║   Membrane Doctor · 可复现自检报告 v0.2.1      ║
 ╚══════════════════════════════════════════════╝
 
 【剧本 1 · 写入召回】      命中率 100%  (5/5)

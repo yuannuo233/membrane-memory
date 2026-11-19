@@ -1,4 +1,4 @@
-﻿/**
+/**
  * MCP Server（stdio）——让所有支持 MCP 的 Agent 工具接入 Membrane。
  *
  * 零依赖手写 JSON-RPC，不引任何 SDK：
@@ -10,7 +10,17 @@
  */
 import { Membrane, toBrief, toUltraBrief } from "./engine.js";
 import { llmFromEnv } from "./llm.js";
-import type { EntityType, MemoryKind, RelationInput } from "./types.js";
+import {
+  asBoolean as bool,
+  asEntityInputs as entityInputs,
+  asEntityType as entityType,
+  asFiniteNumber as num,
+  asKind as kind,
+  asNumberArray as numArray,
+  asRelationInputs as relationInputs,
+  asString as str,
+  asStringArray as strArray,
+} from "./input.js";
 
 /** MCP 工具定义（JSON Schema，MCP 原生格式，不依赖 zod） */
 const TOOLS = [
@@ -40,8 +50,20 @@ const TOOLS = [
         },
         entities: {
           type: "array",
-          items: { type: "string" },
           description: "这条记忆涉及的其他实体名（手动标注，会优先于规则抽取）",
+          items: {
+            oneOf: [
+              { type: "string" },
+              {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  type: { type: "string", enum: ["person", "place", "org", "concept", "unknown"] },
+                },
+                required: ["name"],
+              },
+            ],
+          },
         },
         relations: {
           type: "array",
@@ -205,52 +227,6 @@ type JsonRpcRequest = {
 function arg(args: Record<string, unknown> | undefined, key: string): unknown {
   return args?.[key];
 }
-function str(v: unknown): string | undefined {
-  return typeof v === "string" ? v : undefined;
-}
-function num(v: unknown): number | undefined {
-  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
-}
-function bool(v: unknown): boolean | undefined {
-  return typeof v === "boolean" ? v : undefined;
-}
-function strArray(v: unknown): string[] | undefined {
-  return Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : undefined;
-}
-function kind(v: unknown): MemoryKind | undefined {
-  return v === "fact" || v === "episode" || v === "preference" || v === "procedure"
-    ? v
-    : undefined;
-}
-function numArray(v: unknown): number[] | undefined {
-  return Array.isArray(v) && v.every((x) => typeof x === "number") ? (v as number[]) : undefined;
-}
-function entityType(v: unknown): EntityType | undefined {
-  return v === "person" || v === "place" || v === "org" || v === "concept" || v === "unknown"
-    ? v
-    : undefined;
-}
-/** 解析 MCP 传进来的 relations 数组（脏项丢弃，不因为一条写错把整条记忆拒掉） */
-function relationInputs(v: unknown): RelationInput[] | undefined {
-  if (!Array.isArray(v)) return undefined;
-  const out: RelationInput[] = [];
-  for (const raw of v) {
-    if (!raw || typeof raw !== "object") continue;
-    const o = raw as Record<string, unknown>;
-    const to = str(o["to"]);
-    const predicate = str(o["predicate"]);
-    if (!to || !predicate) continue;
-    out.push({
-      from: str(o["from"]),
-      fromType: entityType(o["fromType"]),
-      to,
-      toType: entityType(o["toType"]),
-      predicate,
-      confidence: num(o["confidence"]),
-    });
-  }
-  return out;
-}
 
 /** 把任意结果包成 MCP text content */
 function textResult(value: unknown): { content: { type: "text"; text: string }[] } {
@@ -283,7 +259,7 @@ async function callTool(
             pin: bool(arg(args, "pin")),
             namespace: str(arg(args, "namespace")),
             vec: numArray(arg(args, "embedding")),
-            entities: strArray(arg(args, "entities")),
+            entities: entityInputs(arg(args, "entities")),
             relations: relationInputs(arg(args, "relations")),
           },
           { embed: bool(arg(args, "embed")) },
@@ -422,7 +398,7 @@ export async function handleLine(engine: Membrane, line: string): Promise<string
     return send({
       protocolVersion: requested || "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "membrane-memory", version: "0.2.0" },
+      serverInfo: { name: "membrane-memory", version: "0.2.1" },
       instructions:
         "Membrane 记忆脑：用 membrane_add 记住事实，用 membrane_recall 按语义召回并查看 why 理由，用 membrane_relations 查实体之间的关系，用 membrane_link 手动建立关系，用 membrane_forget 遗忘。",
     });

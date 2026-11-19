@@ -1,4 +1,4 @@
-﻿# Why Membrane?
+# Why Membrane?
 
 > This page is not an advertisement. It is a **trade-off document**: who Membrane is for,
 > who it is *not* for, and where it falls short of established alternatives.
@@ -134,7 +134,7 @@ Other ways to help:
 
 ## Finally
 
-This is a solo-developed early version (v0.2.0, 175 tests, no real-world users yet).
+This is a solo-developed early version (v0.2.1, 201 tests, no real-world users yet).
 It is not perfect, but every number in the docs is something you can verify yourself —
 `membrane-memory doctor` ships with the package, is deterministic, and produces the same
 result on any machine running the same code.

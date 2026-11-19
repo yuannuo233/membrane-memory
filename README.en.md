@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 # Membrane 🧠
 
@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
@@ -23,7 +23,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 > Give your agent a memory that never forgets — and tells you **why** it recalled each item.
 > Works out of the box: no network, no model download, no API key, no native dependencies.
 
-> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 175 tests (verified live by CI), **no real-world users yet**.
+> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 201 tests (verified live by CI), **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
 > We do **not** chase "number one on benchmarks" — that is exactly how comparable projects fell from grace.
 
@@ -48,7 +48,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Item | Current state | Risk |
 |---|---|---|
-| **No real-world users yet** | All 175 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
+| **No real-world users yet** | All 201 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
 | **Cross-process concurrency = WAL only** | SQLite single-writer; concurrent writers queue | Fine for personal use; a bottleneck under load |
 | **Performance tested only to 1,000 records** | Writes/queries in seconds at 1k | 100k+ not stress-tested |
 | **Doctor sample is tiny** | 5 recall cases / 8 update pairs | **Regression self-check, not a benchmark** — not a basis for cross-project comparison |
@@ -95,7 +95,7 @@ Requires **Node ≥ 24**. Reason: the built-in `node:sqlite` is experimental in 
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # dev dependencies only (typescript/vitest/tsx); the only runtime dep is ulid
-npm test           # all pass (175 cases at the moment)
+npm test           # all pass (201 cases at the moment)
 npm run build
 node dist/cli.js doctor    # should report all checks passed
 ```
@@ -107,7 +107,7 @@ Then use `node dist/cli.js <command>`, or `npm link` to get a global `membrane-m
 Grab `membrane-memory-x.y.z.tgz` from [Releases](https://github.com/yuannuo233/membrane-memory/releases), then:
 
 ```bash
-npm install -g ./membrane-memory-0.2.0.tgz
+npm install -g ./membrane-memory-0.2.1.tgz
 membrane-memory doctor
 ```
 
@@ -209,6 +209,8 @@ set MEMBRANE_EMBED_MODEL=text-embedding-3-small
 membrane-memory add "User lives in Beijing" --subject user   # embeddings computed automatically
 membrane-memory search "where does he live"                  # query vector fused with full-text
 membrane-memory embed-backfill                               # one-off backfill for older DBs (batched)
+membrane-memory export --out backup.json                     # full backup (memories/evidence/graph/vectors)
+membrane-memory import backup.json                           # restore; idempotent, never overwrites existing ids
 ```
 
 Fully offline is also fine: pass precomputed vectors via `add({ vec })` and `recall({ queryVec })`.
@@ -265,9 +267,22 @@ so the score bound stays at 1.0.
 | Interface | Command | Notes |
 |---|---|---|
 | SDK | `import { Membrane }` | ESM + full TypeScript types |
-| CLI | `add / search / relations / link / entities / embed-backfill / list / stats / mcp / serve / doctor` | complete |
+| CLI | `add / search / relations / link / entities / embed-backfill / list / stats / export / import / mcp-config / mcp / serve / doctor` | complete |
 | MCP | `membrane-memory mcp` | stdio, 10 tools |
 | REST | `membrane-memory serve` | mem0-compatible subset (`/v1/memories`) + web console, binds 127.0.0.1 |
+
+### Web console: view, edit, forget
+
+Open `http://127.0.0.1:8317` after `membrane-memory serve`:
+
+- **Three token modes** in the top bar (persisted): `ultra` + 3 hits / `brief` + 8 / `full` + 8
+- **Detail drawer**: content, validity window, tags, entities, relations, evidence, full audit chain
+- **Edit**: content/kind/subject/confidence/tags/pin → saved as a **new version**, old version kept in history
+- **Forget**: soft delete; tombstones remain auditable; ledger filters by namespace/kind/history
+- **Export**: one-click full JSON backup
+
+REST equivalent: `PATCH|PUT /api/memories/:id`, `DELETE /api/memories/:id`.
+For non-MCP clients see [适配配置/REST与SDK接入.md](适配配置/REST与SDK接入.md) (OpenAI tools schema, Node/Python zero-dependency clients, Docker).
 
 ---
 
@@ -276,7 +291,7 @@ so the score bound stays at 1.0.
 Every number here comes from `membrane-memory doctor` — **same result on any machine** (fixed clock + in-memory DB).
 
 ```
-Doctor Report v0.2.0
+Doctor Report v0.2.1
 Scenario 1 · Write & recall    hit rate 100%  (5/5)
 Scenario 2 · Stale update      current@1 88%  (7/8)
                                contamination@5 0%

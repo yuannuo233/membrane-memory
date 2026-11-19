@@ -356,6 +356,64 @@ export interface MembraneStats {
   byKind: Record<MemoryKind, number>;
   /** 数据库文件字节数（:memory: 时为 0） */
   dbBytes: number;
+  /** 实体节点总数（图检索） */
+  entities: number;
+  /** 关系边总数（含已关闭的历史边） */
+  relations: number;
+}
+
+/**
+ * 导出备份（CLI `membrane export` / SDK exportAll 产物）。
+ * 刻意用纯 JSON + 数字数组：不依赖 SQLite 文件，跨机器/跨版本都能读，
+ * 也方便人眼直接看（这是"本地优先"的底线：数据永远是用户自己的）。
+ */
+export interface ExportBundle {
+  format: "membrane-backup";
+  /** 备份格式版本（与库 schema 版本解耦） */
+  version: number;
+  exportedAt: number;
+  memories: MemoryRecord[];
+  evidence: { memoryId: string; quote: string; at: number }[];
+  entities: GraphEntity[];
+  relations: Relation[];
+  memoryEntities: { memoryId: string; entityId: string }[];
+  /** 向量；不带的话恢复后需要重新 embed 回填 */
+  embeddings: { id: string; vec: number[] }[];
+}
+
+/** 导入结果（幂等：已存在的 id 跳过，不覆盖用户现有数据） */
+export interface ImportResult {
+  memories: number;
+  entities: number;
+  relations: number;
+  embeddings: number;
+  skippedMemories: number;
+  skippedRelations: number;
+  /** 维度与库内现有向量冲突而跳过的条数 */
+  skippedEmbeddings: number;
+}
+
+/**
+ * 编辑现有记忆的入参（`engine.update`）。
+ *
+ * 语义是"修正记忆"而不是"改数据库行"：会创建一条新版本并把旧版本取代，
+ * 旧版本连同证据、关系一起保留，`asOf` 仍能查到编辑前的样子。
+ * 所有字段可选——没给的字段沿用旧值。
+ */
+export interface UpdateInput {
+  content?: string;
+  kind?: MemoryKind;
+  subject?: string | null;
+  tags?: string[];
+  confidence?: number;
+  source?: string | null;
+  pin?: boolean;
+  /** 不给=沿用旧证据；给空数组=清空证据 */
+  evidence?: string[];
+  entities?: (string | EntityInput)[];
+  relations?: RelationInput[];
+  subjectType?: EntityType;
+  vec?: Float32Array | number[];
 }
 
 /** Membrane 构造参数（全部可省） */

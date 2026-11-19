@@ -9,6 +9,155 @@
 
 ---
 
+## v0.2.1 — 2026-11-19
+
+质量版：不加花活，先把"会咬人的地方"处理掉，再补一个本地优先刚需的备份能力。
+**破坏性变更：无**（删掉的符号都没从 `index.ts` 导出，SDK 用户无感）。
+
+### 1. 死代码清理（逐个 Grep 确认零引用后删除）
+
+| 位置 | 符号 | 为什么是死代码 |
+|---|---|---|
+| `src/engine.ts` | `renormalizeWithoutVec` | v0.1 遗留，已被 `normalizeWeights(w,{vec,graph})` 取代，且从未进 SDK 出口 |
+| `src/tokenize.ts` | `CJK_RUN` | 定义了正则但从未被读取 |
+| `src/tokenize.ts` | `charCoverage` | 只有测试调用的便捷包装；统一走 `fuzzyUnits + charScore`，少一个重复口径 |
+| `src/storage.ts` | `relationsForMemoryIds` | v0.1 图查询草案；v0.2 实际走 `relationsTouching` + `collectEdges` |
+| `src/storage.ts` | `memoryIdsForRelations` | 同上，零调用 |
+| `src/engine.ts` | `ScoreBreakdown` 导入 | 只在类型文件里用，engine 从未引用 |
+
+`searchFts` 末尾的 `return []` 保留：TypeScript 控制流需要它，且已注释"理论不可达"。
+
+### 2. 三套入参解析合并为 `src/input.ts`
+
+**问题**：CLI / MCP / REST 各写一份 `parseKind` / `parseEntityType` / `parseRelations` / `num`，
+口径已经开始漂移——REST 的 GET query 全是字符串，代码却按 `typeof === "number"` 判断，
+于是 `GET /api/memories?limit=5` **永远不生效**（`/v1/memories` 复用同一路径，一起失效）。
+
+**修法**：新增 `src/input.ts`，提供 `asString / asFiniteNumber / asBoolean / asStringArray /
+asNumberArray / asKind / asKinds / asEntityType / asEntityInputs / asRelationInputs`，
+三个接入面共用一套"宽进严出"的解析：这里只负责收形状，合法性仍由 `model.ts` 校验。
+
+### 3. 修掉的 bug
+
+| bug | 后果 | 修法 |
+|---|---|---|
+| `GET /api/memories` 的 `limit` 用 `typeof === "number"` | query 参数是字符串 → `?limit=` 永远失效 | 改 `asFiniteNumber`，兼容 `"5"` |
+| `scoreHit` 的 `halfLives[m.kind]` 无兜底 | 库里有非法 kind（手改库/旧数据）→ `freshness` 返回 NaN → 总分 NaN，排序失去意义 | `?? DEFAULT_HALF_LIVES.fact` |
+| `forget()` 不清 `memory_entities` | 长期使用后"这条记忆提到谁"的孤儿行越积越多，`entitiesFor(已删id)` 还能查到 | 遗忘事务里同步 `deleteMemoryEntities` |
+| `stats()` 对未知 kind 直接写键 | 脏数据会往固定形状的 `byKind` 对象上乱加属性 | `hasOwnProperty` 守卫，只统计四种合法 kind |
+| `POST /api/memories` 的 `entities` 只收字符串 | MCP/SDK 都支持 `{name,type}` 对象，REST 静默丢掉类型 | 改 `asEntityInputs`（两种写法都收） |
+| `listEntities(ns, 0 \| 负数)` 未归一 | SQL `LIMIT` 行为依赖底层，可能返回空/异常 | 夹到 `[1, 5000]` |
+| 真实 HTTP 只对 `POST` 读 body | `PATCH /api/memories/:id` 在控制台/curl 里收到的是空对象，编辑永远返回 `duplicate`、只改了个寂寞 | `hasBody` 扩到 `POST/PATCH/PUT`；补一条真正起端口、走 `fetch` 的防回归测试 |
+
+### 4. 新增：全量 JSON 备份（`exportAll` / `importAll`）
+
+本地优先的底线是"数据永远拿得回来"，而 SQLite 文件不能跨版本/跨机器随便搬。
+
+- `membrane-memory export [--out 文件] [--no-embeddings]`
+- `membrane-memory import 备份.json`
+- SDK：`m.exportAll(opts)` / `m.importAll(bundle)`
+
+导的是**库的全部真相**：含被取代、已遗忘的底稿、证据、实体关系与向量——只导现行记忆会让
+恢复后的 `asOf` 历史查询失灵。导入**幂等且不覆盖**：已存在的记忆/关系按 id 跳过；
+实体按 `(namespace, name)` 复用，关系边自动改指向目标库已有实体，不会插出断边；
+向量维度与目标库不符时跳过并计数（`skippedEmbeddings`），绝不把库搞成"永远余弦 0"。
+坏文件（字段不是数组 / 缺 id）直接 `E_IMPORT_FORMAT`，拒绝半截导入。
+
+### 5. 新增：`mcp-config` 接入配置生成器（21 个客户端）
+
+适配文档原来全是 `<你的node路径>` 占位符，新手要改三处路径、还容易写错 JSON 逗号。
+新增 `src/mcp-config.ts` + CLI 命令：
+
+```bash
+membrane-memory mcp-config                  # 列出 21 个客户端
+membrane-memory mcp-config cursor           # 输出可直接粘贴的 JSON
+membrane-memory mcp-config codex --out config.toml
+```
+
+- 路径自动填：node = 当前进程，cli.js = 本包 `dist/cli.js`，db = `MEMBRANE_DB` 或当前目录
+- 格式各自适配：JSON / VS Code `servers`+`type` / Codex TOML / Continue YAML / Zed `context_servers` / Claude Code 命令行
+- `--out` 目标已存在时**拒绝覆盖**（不冲掉用户已有的其他 MCP server）
+- 覆盖：Claude Desktop/Code、Cursor、Cline、Roo、Windsurf、VS Code、Gemini CLI、Codex、Antigravity、
+  Continue、Zed、WorkBuddy、zcode、AstrBot、Cherry Studio、LobeChat、NextChat、n8n、Dify、通用
+
+同时新增 `使用场景.md`：10 个真实场景（编程助手规矩、个人偏好、QQ 群隔离、多项目 namespace、
+决策复盘、离线隐私、换机备份、多 Agent 并发真相、省 token、记忆卫生）+ 一张"什么场景不适合"的诚实清单。
+
+### 6. 内部结构（不改行为的部分）
+
+- **时间过滤单点化**：`memoryTemporalSql` / `relationTemporalSql` 取代 FTS、模糊、向量、关系四处各抄一份；
+  顺手修正历史时点语义——`asOf` 只看有效区间，不再把 `deleted` 标志带进来（软删除会把 `valid_to` 设为删除时刻，
+  `asOf` 早于它时这条记忆"当时确实存在"，storage 既有测试正是这么要求的）。
+- **engine.add 拆分**：`buildRecord`（入参→记录）+ `embeddingPlan`（维度守卫），主流程少 40 行；
+  `writeGraph` 去掉对 `normalizeEntityType(r.fromType)` 的重复调用。
+- `stats()` 增加 `entities` / `relations` 两个字段；`list()` 支持 `kinds` 多选；
+  CLI `stats` 不再用 `listEntities().length` 近似实体数。
+- CLI：新增 `export` / `import`；`add --entities`；`search` / `list` 支持 `--kind` / `--kinds`。
+- REST：`/api/recall` 支持 `kinds` 与 `detail`（ultra/brief/full，与 MCP 对齐）。
+- **package-lock 重新生成**：旧锁文件根节点还写着 `version: 0.1.0`，并且依赖里挂着早已移除的
+  `@modelcontextprotocol/sdk`——`npm ci` 会把它装回来，直接打脸"零运行时依赖"。现在锁文件与 `package.json` 一致。
+
+### 7. 测试
+
+新增 `test/update.test.ts`（6 个）：改正文后新版本生效/旧版本 superseded、历史 `asOf` 仍见旧值、
+证据默认沿用、只改标签/pin 时保留旧向量、内容不变返回 `duplicate`、已遗忘/已取代拒绝编辑、
+改关系标注时旧关系关闭但历史仍可查。
+
+新增 `test/portability.test.ts`（6 个）：全量导出恢复、历史时点仍可查、导入幂等、
+实体同名复用、向量维度冲突跳过、坏文件拒绝导入。
+新增 `test/mcp-config.test.ts`（7 个）：清单完整性、JSON 转义、VS Code 特例、TOML 正斜杠、
+Claude Code 命令、Zed 结构、未知客户端报错。
+`test/server.test.ts` 扩到 18 个：PATCH 编辑、DELETE 遗忘、`GET /api/export`、health 带版本，
+以及一条**真正监听端口**的 HTTP PATCH 测试（专抓"只读 POST body"这类 route() 单测抓不到的坑）。
+
+合计 **201/201 全绿**（13 个测试文件）；doctor 五项剧本七项检查数字保持不变（100% / 88% / 0% / ✓ / 1.00 / 图关系✓）。
+
+### 8. 新增：记忆编辑（版本化更新，不是原地改行）
+
+控制台里点"编辑"如果直接 `UPDATE` 数据库，会同时毁掉三样东西：旧正文、旧证据、旧关系，
+`asOf` 也再查不到"编辑前它长什么样"。所以做成了**新版本取代旧版本**：
+
+- SDK：`m.update(id, patch)` / `m.updateAsync(id, patch, {embed})`，`UpdateInput` 所有字段可选，没给就沿用旧值。
+- 语义：事务内插入新记录 → 写证据/图 → `markSuperseded(旧, 新)` → 关闭旧记忆派生的关系 →
+  新旧两边各写一条审计（`add` 带 `editOf`、`supersede` 带 `reason:"user-edit"`）。
+- 内容没变且没给新证据/图/向量 → 返回 `duplicate`，不制造无意义版本。
+- 正文没变、只改元数据（tags/pin/confidence）→ **沿用旧向量**，避免"改个标签把语义检索废掉"。
+- 正文变了 → 必须重算或由调用方传 `vec`；`updateAsync` 配了 embedding 模型就自动重算，失败按纯文本更新并在 note 标注。
+- 已遗忘抛 `E_UPDATE_DELETED`，已被取代抛 `E_UPDATE_STALE`（提示去编辑现行版本），绝不悄悄改历史。
+- REST：`PATCH|PUT /api/memories/:id`、`DELETE /api/memories/:id`。
+
+### 9. 新增：Web 控制台 v2（可看、可改、可删、可选省 Token）
+
+`web/index.html` / `app.js` / `app.css` 全部重写，仍然是零依赖原生 JS：
+
+- **三种 Token 模式**（顶栏切换，`localStorage` 持久化）：
+  `省 Token` = `detail:"ultra"` + limit 3；`平衡` = `brief` + 8；`完整` = `full` + 8。
+  召回卡片会随模式变化：ultra 只显示 id/内容/分数，full 才渲染 why 与五路分数明细。
+- **记忆详情**：正文、kind/subject/namespace/confidence/valid_from/valid_to/pin/superseded_by、
+  标签、实体、关系句子、证据原文、完整审计链。
+- **编辑**：弹窗改正文/类型/主语/置信度/标签/pin；保存走 PATCH，成功后自动打开新版本详情。
+- **遗忘**：DELETE 软删除，二次确认；墓碑仍在 `include superseded & tombstones` 下可见。
+- **台账筛选**：namespace、kind、是否包含被取代/墓碑；操作列固定在右侧，窄屏隐藏次要列，不再把按钮挤出屏幕。
+- **导出备份**：一键下载 `/api/export` 的 JSON。
+- 修布局横向溢出（`.main` 的 `width:100%` 与 `margin-left` 叠加）；版本号从 health 动态读取。
+
+### 10. 新增：生态适配（不只 MCP）
+
+- `适配配置/openai-tools/`：`remember / recall / update / forget` 四份 Function Calling schema，
+  外加合并好的 `all.json`，可直接放进 OpenAI 兼容接口的 `tools`。
+- `适配配置/REST与SDK接入.md`：启动、鉴权、最小闭环、三模式选择、全部路由、常见坑。
+- `适配配置/examples/node-client.mjs`、`python-client.py`：零依赖客户端（Node 18+ / Python 标准库），
+  覆盖 remember/recall/update/forget/history/evidence/relations/export。
+- `Dockerfile` + `.dockerignore`：Node 24 多阶段构建，`/data` volume 持久化，`0.0.0.0:8317`。
+- `mcp-config` 已覆盖 21 个客户端；CI 已有 Ubuntu/Windows × Node 24/25 矩阵与文档一致性检查。
+
+### 11. 文档
+
+README / README.en / DESIGN / llms.txt / 使用场景 / 各工具接入配置同步：201 测试、13 测试文件、
+编辑与三模式说明、REST/SDK/OpenAI 入口、Docker 用法。`package.json files` 加入 `适配配置/` 与 `Dockerfile`。
+
+---
+
 ## v0.2.0 — 2026-11-19
 
 这一版干两件事：**把向量检索从"接口留了个口子"变成真的能用**，以及**从零做图检索**。

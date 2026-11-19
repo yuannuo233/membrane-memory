@@ -5,14 +5,27 @@ const API = '';
 const KIND_COLORS = { fact: '#7aa2ff', episode: '#b18cff', preference: '#5ee6c0', procedure: '#f5c26b' };
 const KINDS = ['fact', 'episode', 'preference', 'procedure'];
 
+// Token 三模式：召回返回的详细度 + 默认条数。存在 localStorage，刷新后保持。
+const MODES = {
+  ultra: { label: '省 Token', detail: 'ultra', limit: 3, hint: '只返回 id + 内容 + 分数，最省 token' },
+  brief: { label: '平衡', detail: 'brief', limit: 8, hint: '加 kind / subject / 时间 / 证据数，日常推荐' },
+  full:  { label: '完整', detail: 'full', limit: 8, hint: '完整 why + 五路分数明细，排查用（贵约 4 倍）' },
+};
+const state = {
+  mode: localStorage.getItem('membrane.mode') || 'brief',
+  detailId: null,
+  detailRecord: null,
+};
+
 async function api(path, opts = {}) {
   const r = await fetch(API + path, {
     method: opts.method || 'GET',
     headers: opts.body ? { 'Content-Type': 'application/json' } : {},
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  let data = null;
+  try { data = await r.json(); } catch { data = null; }
+  if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
   return data;
 }
 
@@ -30,12 +43,27 @@ document.querySelectorAll('.nav-item').forEach(btn => {
   });
 });
 
+// ---- Token 模式 ----
+function applyMode(mode) {
+  if (!MODES[mode]) mode = 'brief';
+  state.mode = mode;
+  localStorage.setItem('membrane.mode', mode);
+  document.querySelectorAll('#mode-switch button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  $('rc-limit').value = MODES[mode].limit;
+  $('recall-mode-hint').textContent = `FTS5 BM25 + RRF + temporal decay · ${MODES[mode].label}模式：${MODES[mode].hint}`;
+}
+document.querySelectorAll('#mode-switch button').forEach(b => {
+  b.addEventListener('click', () => applyMode(b.dataset.mode));
+});
+
 // ---- Overview ----
 async function loadStats() {
   try {
     const h = await api('/api/health');
     $('health-chip').textContent = '● healthy';
+    $('health-chip').classList.remove('err');
     $('db-path').textContent = h.db || 'local';
+    if (h.version) $('version-chip').textContent = 'v' + h.version;
   } catch (e) {
     $('health-chip').textContent = '● offline';
     $('health-chip').classList.add('err');
@@ -46,6 +74,8 @@ async function loadStats() {
   $('s-current').textContent = s.current;
   $('s-superseded').textContent = s.superseded;
   $('s-deleted').textContent = s.deleted;
+  $('s-entities').textContent = s.entities ?? '—';
+  $('s-relations').textContent = s.relations ?? '—';
   const max = Math.max(1, ...KINDS.map(k => s.byKind[k] || 0));
   $('kind-bars').innerHTML = KINDS.map(k => {
     const n = s.byKind[k] || 0;
@@ -60,6 +90,7 @@ $('btn-ingest').addEventListener('click', async () => {
     content: $('in-content').value.trim(),
     kind: $('in-kind').value,
     subject: $('in-subject').value.trim() || undefined,
+    namespace: $('in-namespace').value.trim() || undefined,
     tags: $('in-tags').value.split(',').map(s => s.trim()).filter(Boolean),
     confidence: Number($('in-conf').value),
     pin: $('in-pin').checked,
@@ -69,59 +100,99 @@ $('btn-ingest').addEventListener('click', async () => {
   if (!body.content) { box.innerHTML = '<span class="err">content required</span>'; return; }
   try {
     const r = await api('/api/memories', { method: 'POST', body });
-    const sup = (r.superseded || []).map(m => `<div>↳ superseded: ${m.id} (${m.content})</div>`).join('');
-    box.innerHTML = `<div class="status-tag">${r.status.toUpperCase()}</div><div>${r.note}</div><div style="margin-top:6px;color:var(--violet)">id: ${r.memory.id}</div>${sup}`;
-  } catch (e) { box.innerHTML = `<span class="err">${e.message}</span>`; }
+    const sup = (r.superseded || []).map(m => `<div>↳ superseded: ${esc(m.id)} (${esc(m.content)})</div>`).join('');
+    box.innerHTML = `<div class="status-tag">${esc(r.status.toUpperCase())}</div><div>${esc(r.note)}</div><div style="margin-top:6px;color:var(--violet)">id: ${esc(r.memory.id)}</div>${sup}`;
+    loadStats();
+  } catch (e) { box.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 });
 
 // ---- Recall ----
 $('rc-asof-toggle').addEventListener('change', e => $('rc-asof-wrap').classList.toggle('hidden', !e.target.checked));
 async function doRecall() {
-  const body = { query: $('rc-query').value.trim(), limit: Number($('rc-limit').value) || 8 };
+  const mode = MODES[state.mode];
+  const body = {
+    query: $('rc-query').value.trim(),
+    limit: Number($('rc-limit').value) || mode.limit,
+    detail: mode.detail,
+  };
   if ($('rc-kind').value) body.kind = $('rc-kind').value;
+  if ($('rc-namespace').value.trim()) body.namespace = $('rc-namespace').value.trim();
   if ($('rc-asof-toggle').checked && $('rc-asof').value) body.asOf = Number($('rc-asof').value);
   const box = $('recall-results');
   if (!body.query) { box.innerHTML = '<div class="empty">enter a query to begin</div>'; return; }
-  box.innerHTML = '<div class="empty">running hybrid retrieval…</div>';
+  box.innerHTML = `<div class="empty">running ${mode.label} recall…</div>`;
   try {
     const r = await api('/api/recall', { method: 'POST', body });
     if (!r.results.length) { box.innerHTML = '<div class="empty">no matching memories</div>'; return; }
-    box.innerHTML = r.results.map((h, i) => {
-      const b = h.breakdown;
-      return `<div class="hit">
-        <div class="hit-top"><span class="hit-score">#${i + 1} · ${h.score.toFixed(4)}</span><span class="hit-kind">${h.memory.kind}</span></div>
-        <div class="hit-content">${esc(h.memory.content)}</div>
-        <div class="hit-why">why: ${esc(h.why)}</div>
-        <div class="breakdown">
-          <span class="bd-item">RRF<sub>text</sub> <b>${b.rrfText.toFixed(4)}</b></span>
-          <span class="bd-item">rank <b>${b.textRank ?? '—'}</b></span>
-          <span class="bd-item">freshness <b>${b.freshness.toFixed(4)}</b></span>
-          <span class="bd-item">age <b>${b.ageDays}d</b></span>
-          <span class="bd-item">half-life <b>${b.halfLifeDays}d</b></span>
-          <span class="bd-item">confidence <b>${b.confidence}</b></span>
-          <span class="bd-item">w(text/vec/time/conf) <b>${b.weights.text}/${b.weights.vec}/${b.weights.time}/${b.weights.conf}</b></span>
-        </div></div>`;
-    }).join('');
-  } catch (e) { box.innerHTML = `<div class="empty err">${e.message}</div>`; }
+    box.innerHTML = r.results.map((h, i) => renderHit(h, i)).join('');
+  } catch (e) { box.innerHTML = `<div class="empty err">${esc(e.message)}</div>`; }
+}
+
+function renderHit(h, i) {
+  // ultra 只有 id/content/score；brief 是扁平的 id/kind/content/subject/score；full 才有 memory/why/breakdown
+  const m = h.memory || { id: h.id, content: h.content, kind: h.kind || '—', subject: h.subject || null };
+  const b = h.breakdown;
+  const actions = `<div class="hit-actions"><button class="btn tiny" data-detail="${esc(m.id)}">详情</button></div>`;
+  const meta = h.memory || h.kind
+    ? `<span class="hit-kind">${esc(m.kind)}</span><span class="hit-subject">${esc(m.subject || '—')}</span>`
+    : `<span class="hit-kind">ultra</span>`;
+  const why = h.why ? `<div class="hit-why">why: ${esc(h.why)}</div>` : '';
+  const bd = b ? `<div class="breakdown">
+      <span class="bd-item">RRF<sub>text</sub> <b>${b.rrfText.toFixed(4)}</b></span>
+      <span class="bd-item">vec <b>${b.rrfVec.toFixed(3)}</b></span>
+      <span class="bd-item">graph <b>${b.rrfGraph.toFixed(3)}</b></span>
+      <span class="bd-item">freshness <b>${b.freshness.toFixed(4)}</b></span>
+      <span class="bd-item">age <b>${b.ageDays}d</b></span>
+      <span class="bd-item">half-life <b>${b.halfLifeDays}d</b></span>
+      <span class="bd-item">confidence <b>${b.confidence}</b></span>
+      <span class="bd-item">weights <b>${b.weights.text}/${b.weights.vec}/${b.weights.time}/${b.weights.conf}/${b.weights.graph}</b></span>
+    </div>` : '';
+  return `<div class="hit">
+    <div class="hit-top"><span class="hit-score">#${i + 1} · ${Number(h.score).toFixed(4)}</span>${meta}${actions}</div>
+    <div class="hit-content">${esc(m.content)}</div>
+    ${why}${bd}
+  </div>`;
 }
 $('btn-recall').addEventListener('click', doRecall);
 $('rc-query').addEventListener('keydown', e => { if (e.key === 'Enter') doRecall(); });
 
 // ---- Ledger ----
 async function loadLedger() {
-  const all = $('ld-all').checked;
-  const rows = await api('/api/memories?validity=' + (all ? 'all' : 'current') + '&limit=200');
+  const params = new URLSearchParams({ validity: $('ld-all').checked ? 'all' : 'current', limit: '200' });
+  if ($('ld-kind').value) params.set('kind', $('ld-kind').value);
+  if ($('ld-namespace').value.trim()) params.set('namespace', $('ld-namespace').value.trim());
   const tbody = document.querySelector('#ledger-table tbody');
-  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty">no records</td></tr>'; return; }
-  tbody.innerHTML = rows.map(m => {
-    let status = '<span class="badge active">ACTIVE</span>';
-    if (m.deleted) status = '<span class="badge del">TOMBSTONE</span>';
-    else if (m.validTo) status = '<span class="badge sup">SUPERSEDED</span>';
-    const date = new Date(m.validFrom).toISOString().replace('T', ' ').slice(0, 16);
-    return `<tr><td>${m.id.slice(0, 12)}…</td><td>${m.kind}</td><td>${esc(m.content)}</td><td>${m.subject || '—'}</td><td>${m.confidence}</td><td>${date}</td><td>${status}</td></tr>`;
-  }).join('');
+  tbody.innerHTML = '<tr><td colspan="8" class="empty">loading…</td></tr>';
+  try {
+    const rows = await api('/api/memories?' + params.toString());
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty">no records</td></tr>'; return; }
+    tbody.innerHTML = rows.map(m => {
+      let status = '<span class="badge active">ACTIVE</span>';
+      if (m.deleted) status = '<span class="badge del">TOMBSTONE</span>';
+      else if (m.validTo) status = '<span class="badge sup">SUPERSEDED</span>';
+      const date = new Date(m.validFrom).toISOString().replace('T', ' ').slice(0, 16);
+      return `<tr>
+        <td class="mono">${esc(m.id.slice(0, 12))}…</td>
+        <td>${esc(m.kind)}</td>
+        <td class="content-cell">${esc(m.content)}</td>
+        <td>${esc(m.subject || '—')}</td>
+        <td>${m.confidence}</td>
+        <td class="mono">${date}</td>
+        <td>${status}</td>
+        <td class="row-actions">
+          <button class="btn tiny" data-detail="${esc(m.id)}">详情</button>
+          <button class="btn tiny" data-edit="${esc(m.id)}" ${m.deleted || m.validTo ? 'disabled' : ''}>编辑</button>
+          <button class="btn tiny danger" data-forget="${esc(m.id)}" ${m.deleted ? 'disabled' : ''}>遗忘</button>
+        </td></tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty err">${esc(e.message)}</td></tr>`;
+  }
 }
 $('ld-all').addEventListener('change', loadLedger);
+$('btn-ld-refresh').addEventListener('click', loadLedger);
+$('ld-kind').addEventListener('change', loadLedger);
+$('ld-namespace').addEventListener('keydown', e => { if (e.key === 'Enter') loadLedger(); });
 
 // ---- Audit ----
 $('btn-audit').addEventListener('click', async () => {
@@ -131,14 +202,170 @@ $('btn-audit').addEventListener('click', async () => {
   try {
     const entries = await api(`/api/memories/${encodeURIComponent(id)}/history`);
     if (!entries.length) { box.innerHTML = '<div class="empty">no audit entries</div>'; return; }
-    box.innerHTML = '<div class="timeline">' + entries.map(e => {
-      const time = new Date(e.at).toISOString().replace('T', ' ').slice(0, 19);
-      return `<div class="tl-item"><span class="tl-op">${e.op.toUpperCase()}</span><span class="tl-time">${time} · seq ${e.seq}</span><div class="tl-detail">${esc(e.detail || '')}</div></div>`;
-    }).join('') + '</div>';
-  } catch (e) { box.innerHTML = `<div class="empty err">${e.message}</div>`; }
+    box.innerHTML = renderHistory(entries);
+  } catch (e) { box.innerHTML = `<div class="empty err">${esc(e.message)}</div>`; }
 });
 
+function renderHistory(entries) {
+  return '<div class="timeline">' + entries.map(e => {
+    const time = new Date(e.at).toISOString().replace('T', ' ').slice(0, 19);
+    return `<div class="tl-item"><span class="tl-op">${esc(e.op.toUpperCase())}</span><span class="tl-time">${time} · seq ${e.seq}</span><div class="tl-detail">${esc(e.detail || '')}</div></div>`;
+  }).join('') + '</div>';
+}
+
+// ---- 详情 / 编辑 / 遗忘 ----
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-detail],[data-edit],[data-forget],[data-close]');
+  if (!t) return;
+  if (t.dataset.close) return closeModal(t.dataset.close);
+  if (t.dataset.detail) return openDetail(t.dataset.detail);
+  if (t.dataset.edit) return openEdit(t.dataset.edit);
+  if (t.dataset.forget) return forgetMemory(t.dataset.forget);
+});
+document.querySelectorAll('.modal').forEach(overlay => {
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.add('hidden'); });
+});
+
+function closeModal(id) { $(id).classList.add('hidden'); }
+function toast(msg, isErr) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.toggle('err', !!isErr);
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 2600);
+}
+
+async function openDetail(id) {
+  state.detailId = id;
+  const body = $('detail-body');
+  body.innerHTML = '<div class="empty">loading…</div>';
+  $('detail-modal').classList.remove('hidden');
+  try {
+    const m = await api(`/api/memories/${encodeURIComponent(id)}`);
+    if (!m) { body.innerHTML = '<div class="empty">not found</div>'; return; }
+    state.detailRecord = m;
+    const [history, evidence, entities] = await Promise.all([
+      api(`/api/memories/${encodeURIComponent(id)}/history`).catch(() => []),
+      api(`/api/memories/${encodeURIComponent(id)}/evidence`).catch(() => []),
+      api(`/api/entities?memoryId=${encodeURIComponent(id)}`).then(x => x.entities).catch(() => []),
+    ]);
+    let relations = [];
+    if (m.subject) {
+      relations = await api(`/api/relations?a=${encodeURIComponent(m.subject)}&limit=20`)
+        .then(x => x.relations).catch(() => []);
+    }
+    const status = m.deleted ? '<span class="badge del">TOMBSTONE</span>'
+      : m.validTo ? '<span class="badge sup">SUPERSEDED</span>' : '<span class="badge active">ACTIVE</span>';
+    const tags = (m.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join(' ') || '—';
+    const entChips = entities.map(x => `<span class="tag">${esc(x.name)} <em>${esc(x.type)}</em></span>`).join(' ') || '—';
+    const relList = relations.map(r => `<div class="mini-row">${esc(r.sentence)} <span class="muted">${esc(r.fromType)} → ${esc(r.toType)}</span></div>`).join('') || '<div class="muted">—</div>';
+    const evList = evidence.map(x => `<div class="mini-row">“${esc(x.quote)}” <span class="muted">${new Date(x.at).toISOString().slice(0, 19).replace('T', ' ')}</span></div>`).join('') || '<div class="muted">—</div>';
+    body.innerHTML = `
+      <div class="detail-status">${status}<span class="mono muted">${esc(m.id)}</span></div>
+      <div class="detail-content">${esc(m.content)}</div>
+      <div class="detail-grid">
+        <div><span class="k">kind</span><b>${esc(m.kind)}</b></div>
+        <div><span class="k">subject</span><b>${esc(m.subject || '—')}</b></div>
+        <div><span class="k">namespace</span><b>${esc(m.namespace || 'default')}</b></div>
+        <div><span class="k">confidence</span><b>${m.confidence}</b></div>
+        <div><span class="k">valid from</span><b>${new Date(m.validFrom).toISOString().slice(0, 19).replace('T', ' ')}</b></div>
+        <div><span class="k">valid to</span><b>${m.validTo ? new Date(m.validTo).toISOString().slice(0, 19).replace('T', ' ') : '—'}</b></div>
+        <div><span class="k">pin</span><b>${m.pin ? 'yes' : 'no'}</b></div>
+        <div><span class="k">superseded by</span><b class="mono">${esc(m.supersededBy || '—')}</b></div>
+      </div>
+      <div class="detail-section"><h3>Tags</h3><div>${tags}</div></div>
+      <div class="detail-section"><h3>Entities</h3><div>${entChips}</div></div>
+      <div class="detail-section"><h3>Relations</h3>${relList}</div>
+      <div class="detail-section"><h3>Evidence</h3>${evList}</div>
+      <div class="detail-section"><h3>Audit chain</h3>${history.length ? renderHistory(history) : '<div class="muted">—</div>'}</div>`;
+    $('btn-detail-edit').disabled = !!m.deleted || !!m.validTo;
+    $('btn-detail-forget').disabled = !!m.deleted;
+  } catch (e) {
+    body.innerHTML = `<div class="empty err">${esc(e.message)}</div>`;
+  }
+}
+
+$('btn-detail-copy').addEventListener('click', async () => {
+  if (!state.detailId) return;
+  try { await navigator.clipboard.writeText(state.detailId); toast('id copied'); }
+  catch { toast('copy failed — select it manually', true); }
+});
+
+async function openEdit(id) {
+  try {
+    const m = state.detailRecord && state.detailRecord.id === id
+      ? state.detailRecord
+      : await api(`/api/memories/${encodeURIComponent(id)}`);
+    if (!m || m.deleted || m.validTo) { toast('只能编辑现行版本', true); return; }
+    state.detailId = id;
+    state.detailRecord = m;
+    $('ed-content').value = m.content;
+    $('ed-kind').value = m.kind;
+    $('ed-subject').value = m.subject || '';
+    $('ed-conf').value = m.confidence;
+    $('ed-tags').value = (m.tags || []).join(', ');
+    $('ed-pin').checked = !!m.pin;
+    $('edit-result').classList.add('hidden');
+    closeModal('detail-modal');
+    $('edit-modal').classList.remove('hidden');
+  } catch (e) { toast(e.message, true); }
+}
+$('btn-detail-edit').addEventListener('click', () => state.detailId && openEdit(state.detailId));
+
+$('btn-edit-save').addEventListener('click', async () => {
+  if (!state.detailId) return;
+  const body = {
+    content: $('ed-content').value.trim(),
+    kind: $('ed-kind').value,
+    subject: $('ed-subject').value.trim() || null,
+    confidence: Number($('ed-conf').value),
+    tags: $('ed-tags').value.split(',').map(s => s.trim()).filter(Boolean),
+    pin: $('ed-pin').checked,
+  };
+  const box = $('edit-result');
+  box.classList.remove('hidden');
+  if (!body.content) { box.innerHTML = '<span class="err">content required</span>'; return; }
+  box.innerHTML = '<span class="muted">saving new version…</span>';
+  try {
+    const r = await api(`/api/memories/${encodeURIComponent(state.detailId)}`, { method: 'PATCH', body });
+    toast(r.status === 'duplicate' ? '内容没变化，未创建新版本' : '已保存新版本，旧版本进入历史');
+    closeModal('edit-modal');
+    loadLedger();
+    loadStats();
+    if (r.memory) openDetail(r.memory.id);
+  } catch (e) { box.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+});
+
+async function forgetMemory(id) {
+  if (!confirm('确定遗忘这条记忆？会软删除，历史仍可 asOf 查到。')) return;
+  try {
+    await api(`/api/memories/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    closeModal('detail-modal');
+    toast('已遗忘（软删除）');
+    loadLedger();
+    loadStats();
+  } catch (e) { toast(e.message, true); }
+}
+$('btn-detail-forget').addEventListener('click', () => state.detailId && forgetMemory(state.detailId));
+
+// ---- 导出备份 ----
+$('btn-export').addEventListener('click', async () => {
+  try {
+    const bundle = await api('/api/export');
+    const text = JSON.stringify(bundle, null, 2);
+    const blob = new Blob([text], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `membrane-backup-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast(`已导出 ${bundle.memories.length} 条记忆 / ${bundle.relations.length} 条关系`);
+  } catch (e) { toast(e.message, true); }
+});
+
+// ---- 工具 ----
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 // ---- boot ----
+applyMode(state.mode);
 loadStats();

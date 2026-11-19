@@ -1,10 +1,10 @@
-﻿# Membrane
+# Membrane
 
 > Temporal-aware, local-first, explainable memory engine for AI agents. MIT licensed. TypeScript/Node. Zero runtime dependencies (only `ulid`); uses built-in `node:sqlite`.
 
 - Repository: https://github.com/yuannuo233/membrane-memory
 - Package: `membrane-memory`
-- Version: 0.2.0
+- Version: 0.2.1
 - License: MIT
 - Language: TypeScript, runs on Node.js >= 24 (node:sqlite is flag-gated below 24)
 
@@ -27,6 +27,8 @@ Membrane gives AI agents persistent memory with three differentiating properties
 - Multi-tenant isolation via `namespace`
 - Fuzzy recall via an inverted index (`char_index`), handles non-contiguous terms
 - Four interfaces: SDK, CLI, MCP server (10 tools), REST + web console
+- Web console supports view/edit/forget with versioned edits; three recall token modes (ultra/brief/full); one-click JSON backup
+- Non-MCP integrations: OpenAI function schemas, zero-dependency Node/Python REST clients, Dockerfile
 - Token-aware output: `ultra` / `brief` / `full` detail levels
 
 ## Known limitations
@@ -36,7 +38,7 @@ Membrane gives AI agents persistent memory with three differentiating properties
 - Entity typing is heuristic (suffix rules, surname list); wrong types never affect recall, only readability.
 - Multi-process concurrency: SQLite single-writer; concurrent writers wait up to 5s, then fail.
 - Only Chinese and English tokenization verified.
-- 175 tests, all authored by the maintainer; no independent third-party validation yet.
+- 201 tests, all authored by the maintainer; no independent third-party validation yet.
 - Default weights and half-lives are untuned heuristics.
 
 ## Install & quick start
@@ -48,15 +50,17 @@ cd membrane-memory && npm install && npm run build
 membrane-memory add "User lives in Beijing" --subject user
 membrane-memory search "where does user live"
 membrane-memory doctor            # reproducible self-check, prints real numbers
+membrane-memory export --out backup.json   # full backup (memories/evidence/graph/vectors)
+membrane-memory import backup.json         # restore; idempotent, never overwrites existing ids
 ```
 
 Library: `import { Membrane } from "membrane-memory";`
-Methods: `add(input) -> AddResult`, `recall(options) -> RecallHit[]`, `forget(id)`, `get(id)`, `history(id)`, `list(options)`, `stats()`. v0.2 adds async variants `addAsync` / `recallAsync` / `backfillEmbeddings` (auto embeddings) and graph APIs `relations(a, b?, opts)`, `link(input)`, `listEntities(ns)`, `entitiesFor(memoryId)`.
+Methods: `add(input) -> AddResult`, `recall(options) -> RecallHit[]`, `forget(id)`, `get(id)`, `history(id)`, `list(options)`, `stats()`. v0.2 adds async variants `addAsync` / `recallAsync` / `backfillEmbeddings` (auto embeddings) and graph APIs `relations(a, b?, opts)`, `link(input)`, `listEntities(ns)`, `entitiesFor(memoryId)`. v0.2.1 adds `exportAll(opts)` / `importAll(bundle)` for full-fidelity JSON backups.
 
 ## Interfaces
 
 - **SDK**: ESM + full TypeScript types (`.d.ts` shipped).
-- **CLI**: `add / search / relations / link / entities / embed-backfill / list / stats / mcp / serve / doctor`.
+- **CLI**: `add / search / relations / link / entities / embed-backfill / list / stats / export / import / mcp-config / mcp / serve / doctor`.
 - **MCP server**: `membrane-memory mcp` (stdio, 10 tools: membrane_add / recall / forget / get / history / list / evidence / stats / link / relations). Plug into any MCP client — WorkBuddy, zcode, Claude Code/Desktop, Cursor, Cline, Windsurf, Google Antigravity, AstrBot, etc.
 - **REST**: `membrane-memory serve` — mem0-compatible subset (`POST /v1/memories`, `POST /v1/memories/search`, `GET /v1/memories/{id}`) + native `/api/*` + web console on `127.0.0.1:8317`.
 
@@ -69,7 +73,7 @@ Methods: `add(input) -> AddResult`, `recall(options) -> RecallHit[]`, `forget(id
 - Fuzzy fallback uses an inverted index (`char_index` table), not a full scan: 2.9x faster on average, 10x faster for rare character combinations.
 - Storage writes wrap the base row and its full-text index in one reentrant transaction, so a crash cannot leave a record that exists but cannot be found.
 - Concurrency: `PRAGMA busy_timeout = 5000`; verified 8 processes × 100 writes with zero loss.
-- 175 tests, all passing (verified by GitHub Actions on every push).
+- 201 tests, all passing (verified by GitHub Actions on every push).
 
 ## Docs
 
