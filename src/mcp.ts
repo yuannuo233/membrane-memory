@@ -451,7 +451,7 @@ export async function handleLine(
     return send({
       protocolVersion,
       capabilities: { tools: {} },
-      serverInfo: { name: "membrane-memory", version: "0.2.2" },
+      serverInfo: { name: "membrane-memory", version: "0.2.3" },
       instructions:
         "Membrane 记忆脑：用 membrane_add 记住事实，用 membrane_recall 按语义召回并查看 why 理由，用 membrane_relations 查实体之间的关系，用 membrane_link 手动建立关系，用 membrane_forget 遗忘。",
     });

@@ -9,7 +9,7 @@
 
 ---
 
-## v0.2.3 — 未发布（2026-11-19）
+## v0.2.3 — 2026-11-19
 
 中英双语控制台版：Web 控制台从“只有中文”改为**中文 / English 可切换**，静态页面与动态数据都跟着切；语言选择本地记住，刷新后保持。
 **破坏性变更：无**；默认仍按浏览器语言选择，后端 API 与 CLI 不变。
@@ -41,7 +41,25 @@
 - 新增 `.lang-switch` 样式，和 `.mode-switch` 保持同一视觉语言；窄屏下两个切换器一起缩。
 - 语言按钮 active 使用蓝色高亮，和 Token 模式的绿色高亮区分。
 
-### 4. 验证
+### 4. 澄清"零依赖"的真实含义 + 增加不依赖浏览器的用法
+
+有人指出"这记忆引擎还要依赖浏览器，就这还敢说零依赖"。这个批评成立：原来的说法只讲了安装时的依赖数，没讲清哪些用法需要浏览器。
+
+**改了什么**：
+
+- 中英 README 都加了明确说明：零依赖 = 安装时不下载第三方 npm 包（除 `ulid`）、无需编译原生模块；**不等于所有用法都不需要浏览器**。
+- 澄清三种用法：CLI / MCP / SDK **纯命令行与纯代码，完全不碰浏览器**；只有可选的 `serve`（Web 控制台）需要浏览器打开界面，不用它功能一个不少。
+- 新增 `命令行.bat`：交互式命令行入口，打开就是提示符，可直接输入 `add` / `search` / `stats` / `relations` 等命令，全程不启动浏览器。
+- 重写 `启动控制台.bat`：原来写死 `E:\开源盛世\...` 路径，换机器就废；改用 `%~dp0` 自定位，并按 环境变量 → 同级 tools → Program Files 的顺序查找 node。
+- 新增 `assets/membrane.ico`：七种尺寸（16–256）的应用图标，双脑半球 + 中缝 + 脑回 + 记忆节点网，配套 `icon-preview.png`。
+- 两个 `.bat` 均按 Windows 编码规则存为 GBK + CRLF。
+
+**验证**：纯命令行实测通过——`add` 写入、`search` 召回（输出含"关系第 1 名（用户 --住在--> 上海）"，说明图检索在工作）、`stats` 显示"实体 2 个 | 关系 1 条"。全程未打开浏览器。
+
+**影响文件**：`README.md`、`README.en.md`、`启动控制台.bat`、`命令行.bat`（新增）、`assets/membrane.ico`（新增）、`assets/icon-preview.png`（新增）
+
+---
+### 5. 验证
 
 - `node --check web/app.js` 通过。
 - `npm run build` 通过。
@@ -51,13 +69,13 @@
 - 真实浏览器验证 MCP 面板：模拟 `Claude Desktop` 通过 stdio 连接后，Ops 显示客户端名、版本、协议、PID、调用次数、最后工具与最后活动；中英文状态文案均正确。
 - **待补**：召回结果 / 详情弹窗 / 编辑弹窗的完整双语浏览器走查。
 
-### 5. 文档
+### 6. 文档
 
 - `_internal/竞品对比与弱项.md` 重排大纲，新增合规 / 加密 / 保留策略、多模态、规模 / ANN 三个专题。
 - 新增 `_internal/交接-当前工作记录.md`，记录本轮全部工作与接手清单。
 - 两份内部文档均在 `.gitignore` 的 `_internal/` 下，**不提交 GitHub**。
 
-### 6. MCP 接入可视化（Ops）
+### 7. MCP 接入可视化（Ops）
 
 **问题**：控制台看不到“谁通过 MCP 接入了这个记忆库”。MCP 是手写 stdio server，一个客户端一个进程；`initialize` 里的 `clientInfo` 被直接忽略，`startMcpServer()` 只在 stderr 打一行启动日志，REST 与 MCP 是两个独立进程，Ops 自然看不到另一个进程。
 
@@ -72,7 +90,7 @@
 
 **影响文件**：`src/storage.ts`、`src/mcp.ts`、`src/server.ts`、`web/index.html`、`web/app.js`、`test/mcp.test.ts`、`test/server.test.ts`、`README.md`、`README.en.md`、`DESIGN.md`、`.gitignore`、`CHANGELOG.md`。
 
-### 7. 自查修复（本轮代码审查发现）
+### 8. 自查修复（本轮代码审查发现）
 
 - **高危 · 登记写库失败会杀死整个 MCP server**：`recordMcpClient` / `touchMcpClient` 原先没有 try/catch 保护，`startMcpServer()` 的 promise 链也没有 `.catch()`。磁盘满或 SQLite 锁超时（> busy_timeout 5 秒）时，unhandled rejection 在 Node 24 默认**直接崩溃进程**——客户端 initialize 挂死。修复：两处登记改为 best-effort（失败只写 stderr，不影响协议响应），`startMcpServer()` 补 `.catch()` 兜底。
 - **中危 · `listMcpClients(NaN)` 会抛 SQL 错**：`Math.max(1, Math.min(200, NaN))` 结果是 NaN，绑定到 `LIMIT ?` 直接报错。修复：`Number.isFinite` 兜底为默认值 50。
