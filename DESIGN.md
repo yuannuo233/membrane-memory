@@ -120,12 +120,16 @@ CREATE TABLE mcp_clients (
 > "苹果"是公司还是水果，靠字符串本身分不出来；若按 type 唯一，同一个名字会分裂成两个节点，
 > 一跳关系就断了。所以 type 只当**属性**，允许从 unknown 升级到具体类型。
 
-> **向量为什么不用 sqlite-vec**：那会破坏"零原生依赖"这个卖点（得装扩展二进制）。
+> **向量为什么默认不用 sqlite-vec / HNSW**：那会破坏"零原生依赖"这个卖点（得装扩展二进制）。
 > 现在 `embeddings` 表存 BLOB，并额外维护一张零依赖的 `vector_lsh` 桶索引：
 > 8 张表 × 8 bit，写入时算好桶，查询只读相近桶再精确余弦重排。
 > 10 万条 × 1536 维实测纯向量约 **300ms**、混合约 **460ms**；
 > 精确全扫（`exactVectorSearch`）约 **10.9s**，用于对账而非常规查询。
-> 百万级仍未压测，这是当前已知的规模边界。
+>
+> **可选适配层（v0.2.7 / P2）**：需要 ANN 的用户可以注入 `VectorIndex`
+> （`HnswVectorIndex` / `SqliteVecVectorIndex` / 自定义实现）。默认仍是 LSH；
+> 适配器 `search` 返回 `null` 时回退 LSH，返回 `[]` 时按"确实没候选"处理。
+> 适配器只缩小候选，最终余弦排序仍由引擎做，不改变 RRF 分数。
 
 > **实现注记（2026-11-19）**：`memory_fts` 采用 FTS5 + 自建 bigram 分词索引——SQLite 内置 `unicode61`
 > 不切中文（整句变成一个 token，等于搜不了中文），`trigram` 又要求查询 ≥3 字。故 FTS 的索引列
@@ -227,6 +231,12 @@ CREATE TABLE mcp_clients (
 - 开发依赖：`typescript`、`vitest`、`tsx`、`@types/node`。其余一律先讨论。
 - **v0.2 未新增任何依赖**（向量检索、图检索全部手写）：没有 `sqlite-vec`、没有 `hnswlib`、没有 `faiss`、
   没有图数据库客户端。要加 ANN 索引属于破坏"零原生依赖"的决定，必须先在本节登记并说明理由。
+- **v0.2.7 可选 ANN 适配层（2026-11-19 登记）**：新增 `VectorIndex` 接口 +
+  `HnswVectorIndex`（`hnswlib-node`）/ `SqliteVecVectorIndex`（`sqlite-vec`）。
+  **两者都不写进 `dependencies`、不作为 peerDependency 硬约束**：用户显式构造时才
+  `require`/`loadExtension`，缺包抛 `E_VECTOR_INDEX_UNAVAILABLE`，默认 LSH 路径完全不受影响。
+  理由：百万级规模下 LSH 候选扫描有上限，给需要的人一条可选出路，同时守住 `npx` 开箱即用。
+  代价：可选包是原生依赖，安装失败/平台不匹配由用户自行承担；索引重启后从 `embeddings` 重建。
 
 > **已移除的依赖（2026-11-19）**：原计划用 `@modelcontextprotocol/sdk` 实现 MCP，
 > 后改为**零依赖手写 JSON-RPC**（只需 `initialize` / `tools/list` / `tools/call` / `ping`
@@ -298,7 +308,7 @@ CREATE TABLE mcp_clients (
   CORS 默认零放行（需要跨源用 MEMBRANE_CORS_ORIGIN 指定 Origin）；/api/health 不再暴露数据库路径；
   新增 `embed-purge`（换 embedding 模型后清理旧维度）；MCP 响应按请求顺序写回；
   证据计数按候选查询；若干注释/截断修正。详见 CHANGELOG v0.2.6。
-- 测试：**17 文件 227/227 全绿**；tsc 0 错误；npm pack 通过。
+- 测试：**19 文件 245/245 全绿**；tsc 0 错误；npm pack 通过。
 
 ## 12. 交接规范（随时可交接的保证）
 
@@ -307,3 +317,5 @@ CREATE TABLE mcp_clients (
 3. 分支：main 单干（小团队），破坏性实验开 feature/ 分支
 4. 接手五步：读本文 → `npm test` 全绿 → 跑 doctor 确认 → 看未勾选项 → 认领
 5. 所有"为什么这么设计"写进代码注释就近处；跨模块的决策写回本文
+
+

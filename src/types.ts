@@ -6,6 +6,7 @@
  *
  * 时间约定：所有时间戳一律 unix 毫秒（UTC），与 SQLite 存储一致。
  */
+import type { VectorIndex } from "./vector-index.js";
 
 /** 记忆种类（DESIGN.md 第 3 节 kind 枚举） */
 export type MemoryKind = "fact" | "episode" | "preference" | "procedure";
@@ -157,6 +158,13 @@ export interface GraphOptions {
    * 默认 true：不想要噪声就设 false，只用手动标注。
    */
   autoExtract?: boolean;
+  /**
+   * 是否在 addAsync() 时额外用 LLM 抽关系（默认 false，保证零依赖默认不变）。
+   * LLM 失败/返回空 → 自动回退规则抽取；手动 relations 仍然最优先。
+   */
+  llmExtract?: boolean;
+  /** LLM 抽出的关系置信度，默认 0.8（规则是 0.7，手动默认 1） */
+  llmConfidence?: number;
 }
 
 /** 新增记忆输入（除 content 外全部可省，校验规则见 src/model.ts） */
@@ -442,6 +450,11 @@ export interface MembraneOptions {
   candidateFactor?: number;
   /** 图检索开关（默认自动规则抽取开） */
   graph?: GraphOptions;
+  /**
+   * 可选外部向量索引（HNSW / sqlite-vec 适配器）。
+   * 不传 = 默认零依赖 LSH；传入后写入/删除会同步维护，首次查询按现有向量建一次。
+   */
+  vectorIndex?: VectorIndex;
 }
 
 /** OpenAI 兼容端点配置（唯一可外发的组件，用户显式配置才启用） */

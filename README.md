@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md#10-依赖白名单新增依赖需在此登记)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.2.6-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.7-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **时间感知、本地优先、可解释的 Agent 记忆引擎。**
@@ -30,7 +30,7 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 > 只有 `membrane-memory serve`（可选的 Web 控制台）才需要用浏览器打开看界面。
 > 不装浏览器、不启控制台，引擎功能一个不少。
 
-> 🔴 **诚实声明（请先读）**：这是 v0.2 早期项目，单人开发、227 个测试（CI 实时验证）、**尚无真实用户验证**。
+> 🔴 **诚实声明（请先读）**：这是 v0.2 早期项目，单人开发、245 个测试（CI 实时验证）、**尚无真实用户验证**。
 > 下方「[已知局限](#已知局限别踩坑)」把我们所有短板逐条写明了，建议先看完再决定用不用。
 > 我们不做"benchmark 刷到第一"的宣传——更看重数字能被你自己复现。
 
@@ -45,7 +45,7 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 
 | 缺什么 | 影响 | 说明 |
 |---|---|---|
-| **图检索只靠规则抽取，覆盖面窄** | 只认 6 类中文句式（住在/位于、在X工作读书、A是B的X、A的X是B、喜欢、讨厌） | 复杂句子抽不出关系。要准就手动标注 `relations`，规则只当"能抽就抽"的兜底 |
+| **图检索默认规则抽取，覆盖面窄** | 内置 6 类中文句式；27 条自建回归集 F1=1.0，但这是自建集，不是开放世界准确率 | 复杂句/否定嵌套仍会漏。可手动标注 `relations`，或开 `graph.llmExtract` 用可选 LLM 抽取（失败自动回退规则） |
 | **向量检索要你自己提供 embedding 端点** | 不配就退回纯全文（中文靠 bigram，同义词搜不到） | 支持 OpenAI 兼容的 `/embeddings`（`MEMBRANE_LLM_BASE_URL` + `MEMBRANE_EMBED_MODEL`）；也可以用 `vec` / `queryVec` 自己算好传进来 |
 | **实体识别是猜的，不是模型抽的** | "北京"能靠"市/省/区"后缀认成地点，但"苹果"是公司还是水果分不出来 | 类型只是提示字段，判断错了不影响召回，只影响你读 `why` |
 | **没有多语言分词质量保证** | 中文（bigram）+ 英文（整词）能用；日文/韩文/小语种效果未验证 | 只测过中英文 |
@@ -55,11 +55,11 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 
 | 项目 | 现状 | 风险 |
 |---|---|---|
-| **没有真实用户验证** | 227 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
+| **没有真实用户验证** | 245 个测试全是我们自己写的，测的是"我们以为的场景" | 真实用法可能踩到我们没想到的坑 |
 | **同 namespace 多任务会串** | 只有 namespace 隔离，没有自动 `task_id`；同 namespace 的任务记忆会一起进候选 | 多任务必须按 `task-<id>` 分 namespace，见上文约定 |
 | **跨进程并发只有 WAL 兜底** | SQLite 单写者模型，多进程同时写会排队 | 个人用没问题；高并发场景会成瓶颈 |
-| **性能只压测到 10 万条** | 10 万条 × 1536 维：纯向量约 300ms、混合约 460ms（LSH 桶索引） | 百万级、真实 embedding 分布、极端桶倾斜未验证；对账可 `exactVectorSearch` 强制全扫 |
-| **默认向量索引是近似的** | 10 万级默认走 LSH 桶，top-1 稳；桶分布极端时可能漏掉部分近邻 | 需要和暴力搜索完全一致时，打开 `exactVectorSearch`（约 11s/次），或先跑 `bench-scale` 对账 |
+| **性能压到百万级，但百万级不是"免费"** | 100k × 1536 纯向量约 300ms；1M × 768 稳态 p50 约 3.5s、p95 约 26s（冷启动） | 1M 下 LSH 桶会截断到 5 万候选，极端桶倾斜可能漏近邻；要更低延迟/更高召回，注入可选 HNSW/sqlite-vec 适配器 |
+| **默认向量索引是近似的** | 10 万级默认走 LSH 桶，top-1 稳；桶分布极端时可能漏掉部分近邻 | 需要和暴力搜索完全一致时，打开 `exactVectorSearch`（100k 热缓存约 11s/次），或先跑 `bench-scale` 对账 |
 | **doctor 样本很小** | 召回 5 条 / 更新 8 组 | **是回归自检，不是 benchmark**，不能作为跨项目横向比较的依据 |
 | **单人维护** | 没有团队、没有 SLA | 提 issue 可能几天才回 |
 | **半衰期/权重等参数是拍脑袋定的** | 0.4/0.3/0.2/0.1/0.1 和 90/14/365/60 天，没有调优依据 | 你的使用场景可能需要自己调 |
@@ -71,7 +71,8 @@ Windsurf、Zed、AstrBot 等所有主流 AI 工具。MIT 开源，可自托管�
 - ❌ 不追求 benchmark 排名（我们只保证 doctor 数字可复现）
 
 > 如果你需要"开箱即用的高质量图检索、成熟的向量索引（HNSW/faiss）、已经过大规模压测的方案"——
-> 市面上已有成熟方案能满足这些需求，选它们就好。我们不装能。
+> 默认路径不内置这些东西；HNSW/sqlite-vec 只作为**可选适配器**存在（要你自己装），
+> 图抽取也可以选 LLM。选成熟方案、或按 `适配配置/可选向量索引.md` 自己接，都行。
 
 ---
 
@@ -104,7 +105,7 @@ Agent 记忆领域已有不少成熟项目。Membrane 选择了一个不同的�
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # 只装开发依赖（typescript/vitest/tsx），运行时依赖只有 ulid
-npm test           # 全部通过（当前 227 个用例）
+npm test           # 全部通过（当前 245 个用例）
 npm run build
 node dist/cli.js doctor    # 应该全部通过
 ```
@@ -391,3 +392,5 @@ README 里的数字全部来自 `membrane-memory doctor`——**换台机器跑�
 ## License
 
 MIT © 2026 Membrane Contributors
+
+

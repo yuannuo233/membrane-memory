@@ -25,6 +25,7 @@ import { createMonotonicUlid } from "./ulid.js";
 import { embedText } from "./llm.js";
 import type { FetchLike } from "./llm.js";
 import { extractGraph } from "./graph-extract.js";
+import { extractGraphWithLlm } from "./graph-extract-llm.js";
 import {
   DEFAULT_CONFLICT_POLICY,
   DEFAULT_CONFLICT_THRESHOLDS,
@@ -68,6 +69,10 @@ interface ResolvedConfig {
   now: () => number;
   /** 写入时是否用规则自动抽实体/关系（默认 true） */
   autoExtract: boolean;
+  /** addAsync 是否额外尝试 LLM 关系抽取（默认 false） */
+  llmExtract: boolean;
+  /** LLM 关系置信度（默认 0.8） */
+  llmConfidence: number;
 }
 
 /** 余弦相似度（向量检索用，输入已归一化或原始均可） */
@@ -196,7 +201,7 @@ export class Membrane {
 
   constructor(options: MembraneOptions = {}) {
     const dbPath = options.dbPath ?? process.env["MEMBRANE_DB"] ?? "./membrane.db";
-    this.storage = new Storage(dbPath);
+    this.storage = new Storage(dbPath, { vectorIndex: options.vectorIndex });
     this.llm = options.llm;
     this.cfg = {
       weights: { ...DEFAULT_WEIGHTS, ...(options.weights ?? {}) },
@@ -205,6 +210,8 @@ export class Membrane {
       candidateFactor: Math.max(1, options.candidateFactor ?? 8),
       now: options.now ?? (() => Date.now()),
       autoExtract: options.graph?.autoExtract !== false,
+      llmExtract: options.graph?.llmExtract === true,
+      llmConfidence: Math.min(1, Math.max(0, options.graph?.llmConfidence ?? 0.8)),
     };
     this.newId = createMonotonicUlid();
   }
@@ -687,21 +694,64 @@ export class Membrane {
    */
   async addAsync(
     input: AddInput,
-    opts: { injectFetch?: FetchLike; embed?: boolean } = {},
+    opts: {
+      injectFetch?: FetchLike;
+      embed?: boolean;
+      /** 关系抽取方式：默认按 MembraneOptions.graph.llmExtract 决定；手动 relations 永远最优先 */
+      relationExtraction?: "rules" | "llm";
+    } = {},
   ): Promise<AddResult> {
-    if (input.vec || opts.embed === false || !this.llm?.embeddingModel) return this.add(input);
-    try {
-      const vec = await embedText(this.llm, input.content, { injectFetch: opts.injectFetch });
-      if (!vec) return this.add(input);
-      return this.add({ ...input, vec });
-    } catch (err) {
-      const r = this.add(input);
-      return {
-        ...r,
-        embeddingStatus: "none",
-        note: `${r.note} ⚠️ 向量计算失败（${err instanceof Error ? err.message : String(err)}），本次按纯全文写入。`,
-      };
+    // 1) 可选 LLM 图抽取。失败/返回空数组 → 不传 relations，交给 add() 的规则兜底。
+    let graphInput: Pick<AddInput, "entities" | "relations"> | null = null;
+    let graphNote = "";
+    const manualGraph = (input.entities?.length ?? 0) > 0 || (input.relations?.length ?? 0) > 0;
+    const wantLlm =
+      opts.relationExtraction === "llm" ||
+      (opts.relationExtraction !== "rules" && this.cfg.llmExtract);
+    if (wantLlm && !manualGraph) {
+      if (!this.llm?.model) {
+        graphNote = "⚠️ LLM 关系抽取不可用（未配置 model），已回退规则。";
+      } else {
+        try {
+          const g = await extractGraphWithLlm(
+            input.content,
+            input.subject ?? null,
+            normalizeEntityType(input.subjectType),
+            this.llm,
+            { injectFetch: opts.injectFetch, confidence: this.cfg.llmConfidence },
+          );
+          // 只有真的抽到关系才覆盖规则；空结果按“没抽到”处理，继续走规则
+          if (g.relations.length > 0) {
+            graphInput = { entities: g.entities, relations: g.relations };
+          }
+        } catch (err) {
+          graphNote = `⚠️ LLM 关系抽取失败（${err instanceof Error ? err.message : String(err)}），已回退规则。`;
+        }
+      }
     }
+
+    // 2) 可选 embedding；失败绝不阻断写入。
+    let base: AddInput = graphInput ? { ...input, ...graphInput } : input;
+    let embeddingNote = "";
+    if (!base.vec && opts.embed !== false && this.llm?.embeddingModel) {
+      try {
+        const vec = await embedText(this.llm, base.content, { injectFetch: opts.injectFetch });
+        if (vec) base = { ...base, vec };
+        else embeddingNote = "⚠️ embedding 未返回向量，本次按纯全文写入。";
+      } catch (err) {
+        embeddingNote = `⚠️ 向量计算失败（${err instanceof Error ? err.message : String(err)}），本次按纯全文写入。`;
+      }
+    }
+
+    // 3) 去重/冲突/入库仍只有 add() 一条路径。
+    const r = this.add(base);
+    const notes = [graphNote, embeddingNote].filter(Boolean).join(" ");
+    if (!notes) return r;
+    return {
+      ...r,
+      embeddingStatus: base.vec ? r.embeddingStatus : "none",
+      note: `${r.note} ${notes}`,
+    };
   }
 
   /**
@@ -1205,30 +1255,41 @@ export class Membrane {
       top.push({ id, sim: cosineWithNorm(qv, qNorm, vec, vNorm) });
     };
 
-    // 优先走 LSH 桶：只读相近桶的候选；候选为空/索引不可用时回退精确全扫。
-    // 这里不做"近似返回"，桶内候选仍逐条做精确余弦，只是缩小了扫描范围。
-    const candidateIds = options.exactVectorSearch
-      ? []
-      : this.storage.lshCandidateIds(scan, qv);
-    // 每批/每路结束后统一剪枝，数组最多长到 2×poolSize
+    // 优先走可选 ANN（HNSW/sqlite-vec）：它返回 null 才回退 LSH；
+    // 返回 [] 表示索引可用但确实没候选，不能当成“索引不可用”去全扫。
     const prune = (): void => {
       if (top.length > poolSize * 2) {
         top.sort((a, b) => b.sim - a.sim);
         top.length = poolSize;
       }
     };
-    if (candidateIds.length > 0) {
-      const vectors = this.storage.getEmbeddingVectorsByIds(candidateIds);
-      for (const id of candidateIds) {
+    const useIds = (ids: string[]): void => {
+      const vectors = this.storage.getEmbeddingVectorsByIds(ids);
+      for (const id of ids) {
         const item = vectors.get(id);
         if (item) consider(id, item.vec, item.norm);
       }
       prune();
+    };
+    const annIds = options.exactVectorSearch
+      ? null
+      : this.storage.annCandidateIds(scan, qv);
+    if (annIds !== null) {
+      if (annIds.length === 0) return [];
+      useIds(annIds);
     } else {
-      this.storage.scanEmbeddingVectors(scan, (batch) => {
-        for (const item of batch) consider(item.id, item.vec, item.norm);
-        prune();
-      });
+      // 默认零依赖 LSH：只读相近桶；候选为空/索引不可用时回退精确全扫。
+      const candidateIds = options.exactVectorSearch
+        ? []
+        : this.storage.lshCandidateIds(scan, qv);
+      if (candidateIds.length > 0) {
+        useIds(candidateIds);
+      } else {
+        this.storage.scanEmbeddingVectors(scan, (batch) => {
+          for (const item of batch) consider(item.id, item.vec, item.norm);
+          prune();
+        });
+      }
     }
 
     top.sort((a, b) => b.sim - a.sim);

@@ -1,6 +1,6 @@
 ﻿{
   "name": "membrane-memory",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Temporal-aware, local-first, explainable memory engine for AI agents. Zero dependencies, single SQLite file, MCP server included.",
   "type": "module",
   "license": "MIT",
@@ -47,6 +47,7 @@
     "doctor": "node dist/cli.js doctor",
     "embed-purge": "node dist/cli.js embed-purge",
     "bench:scale": "node scripts/bench-scale.mjs",
+    "eval:extract": "node scripts/eval-extract.mjs",
     "check": "node scripts/check-consistency.mjs && node scripts/scan-stale-versions.mjs",
     "prepublishOnly": "npm run build && npm run check"
   },

@@ -134,9 +134,11 @@ Other ways to help:
 
 ## Finally
 
-This is a solo-developed early version (v0.2.6, 227 tests, no real-world users yet).
+This is a solo-developed early version (v0.2.7, 245 tests, no real-world users yet).
 It is not perfect, but every number in the docs is something you can verify yourself —
 `membrane-memory doctor` ships with the package, is deterministic, and produces the same
 result on any machine running the same code.
 
 We would rather ship slowly than publish claims that cannot be reproduced.
+
+

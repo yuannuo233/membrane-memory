@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![Zero Dependency](https://img.shields.io/badge/dependencies-zero-success.svg)](DESIGN.md)
 [![CI](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/yuannuo233/membrane-memory/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.2.6-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.7-blue.svg)](CHANGELOG.md)
 [![GitHub stars](https://img.shields.io/github/stars/yuannuo233/membrane-memory?style=social)](https://github.com/yuannuo233/membrane-memory)
 
 **Temporal-aware, local-first, explainable memory engine for AI agents.**
@@ -30,7 +30,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 > `membrane-memory serve` (the optional web console) renders in one. Skip it and you lose
 > nothing functionally.
 
-> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 227 tests (verified live by CI), **no real-world users yet**.
+> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 245 tests (verified live by CI), **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
 > We do **not** chase "number one on benchmarks" — that is exactly how comparable projects fell from grace.
 
@@ -45,7 +45,7 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Missing | Impact | Note |
 |---|---|---|
-| **Graph retrieval relies on rules, so coverage is narrow** | Only 6 Chinese sentence patterns (lives in / works or studies at X / A is B's X / A's X is B / likes / dislikes) | Complex sentences yield nothing. Annotate `relations` manually for accuracy; rules are a best-effort fallback |
+| **Graph retrieval defaults to rules, so coverage is narrow** | 6 Chinese patterns; 27-case self-built regression set scores F1=1.0, but that is not open-world accuracy | Complex/negated sentences still miss. Annotate `relations` manually, or enable optional `graph.llmExtract` with fallback to rules |
 | **Vector search needs your own embedding endpoint** | Without one it falls back to full-text (CJK bigram; synonyms won't match) | Any OpenAI-compatible `/embeddings` works (`MEMBRANE_LLM_BASE_URL` + `MEMBRANE_EMBED_MODEL`); you can also pass `vec` / `queryVec` computed elsewhere |
 | **Entity typing is heuristic, not model-based** | "Beijing" is typed as a place via suffix rules, but "Apple" can't be disambiguated between company and fruit | Type is only a hint — a wrong guess never hurts recall, only how you read `why` |
 | **Multilingual quality not guaranteed** | Chinese (bigram) + English (word) work; Japanese/Korean/others untested | Only Chinese & English have been verified |
@@ -55,11 +55,11 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 
 | Item | Current state | Risk |
 |---|---|---|
-| **No real-world users yet** | All 227 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
+| **No real-world users yet** | All 245 tests are ours, testing scenarios *we* imagined | Real usage may hit cases we missed |
 | **Tasks share memory within one namespace** | Only `namespace` isolation; no automatic `task_id`; task memories in one namespace become candidates together | Use `task-<id>` per task, see the isolation section above |
 | **Cross-process concurrency = WAL only** | SQLite single-writer; concurrent writers queue | Fine for personal use; a bottleneck under load |
-| **Performance stress-tested only to 100k records** | 100k × 1536-dim: ~300ms pure vector, ~460ms hybrid (LSH bucket index) | Millions, real embedding distributions, and extreme bucket skew are unverified; use `exactVectorSearch` for exact parity |
-| **The default vector index is approximate** | At 100k scale, LSH buckets keep top-1 stable; extreme bucket skew may miss some neighbors | When exact parity with brute force is required, enable `exactVectorSearch` (~11s/query) or run `bench-scale` to audit |
+| **Stress-tested to 1M, but 1M is not free** | 100k × 1536 ~300ms pure vector; 1M × 768 steady-state p50 ~3.5s, p95 ~26s (cold start) | At 1M, LSH truncates to 50k candidates; extreme bucket skew may miss neighbors. Inject optional HNSW/sqlite-vec for lower latency/higher recall |
+| **The default vector index is approximate** | At 100k scale, LSH buckets keep top-1 stable; extreme bucket skew may miss some neighbors | For exact parity with brute force, enable `exactVectorSearch` (~11s/query warm at 100k) or run `bench-scale` to audit |
 | **Doctor sample is tiny** | 5 recall cases / 8 update pairs | **Regression self-check, not a benchmark** — not a basis for cross-project comparison |
 | **Solo maintainer** | No team, no SLA | Issues may take days |
 | **Weights/half-lives are guesses** | 0.4/0.3/0.2/0.1/0.1 and 90/14/365/60 days are untuned | You may need to tune for your workload |
@@ -71,7 +71,9 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 - ❌ No benchmark chasing (we only promise reproducible doctor numbers)
 
 > If you need turnkey high-quality graph retrieval, a mature vector index (HNSW/faiss), or a
-> stress-tested large-scale solution — a mature alternative project is the better fit. We won't pretend otherwise.
+> stress-tested large-scale solution — those are not built in by default. HNSW/sqlite-vec exist
+> only as **optional adapters** you install yourself; LLM graph extraction is likewise opt-in.
+> Use a mature alternative, or wire one in via `适配配置/可选向量索引.md`.
 
 ---
 
@@ -104,7 +106,7 @@ Requires **Node ≥ 24**. Reason: the built-in `node:sqlite` is experimental in 
 git clone https://github.com/yuannuo233/membrane-memory.git
 cd membrane-memory
 npm install        # dev dependencies only (typescript/vitest/tsx); the only runtime dep is ulid
-npm test           # all pass (227 cases at the moment)
+npm test           # all pass (245 cases at the moment)
 npm run build
 node dist/cli.js doctor    # should report all checks passed
 ```
@@ -355,3 +357,5 @@ Stack: TypeScript / Node `node:sqlite` / zero runtime deps (except `ulid`).
 ## License
 
 MIT © 2026 Membrane Contributors
+
+

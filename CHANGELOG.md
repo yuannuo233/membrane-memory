@@ -9,6 +9,78 @@
 
 ---
 
+## v0.2.7 — 2026-11-20
+
+### 关系抽取可评测 + 可选 LLM 抽取 + 真实向量压测入口 + 可选 ANN 适配层
+
+> 对应外部评审的三条弱项：规则抽取弱、规模未验证、索引不够成熟。
+> 默认路径不变：零依赖 LSH、零网络、单 SQLite 文件。
+
+**P0：关系抽取评测与可选 LLM 抽取**
+- 新增 `bench/extraction-cases.json`（27 条人工用例）与 `npm run eval:extract`
+  （`scripts/eval-extract.mjs`，支持 `--min-f1` / `--json`）。
+- 首轮只有 22/27，暴露出三个真问题并修复：
+  1. `张三和李四不是同学` 被抽成 `张三|同学|李四不`（`SLOT` 贪心吃掉“不”）；
+  2. “讨厌下雨天和堵车”被抽成一个超长宾语；
+  3. 实体与谓词之间的中文逗号/空格导致漏抽。
+- `src/graph-extract.ts`：
+  - 新增 `GAP = "[，,、；;\\s]*"`，允许实体和谓词之间有标点/空格；
+  - 新增对称关系规则（`A和B是同学/同事/朋友/合伙人/邻居/室友`）；
+  - “喜欢/讨厌”的宾语按 `和/与/、` 拆分，生成多条关系；
+  - 对称规则加 `(?<!不)`，避免把否定句抽成正关系。
+- 修复后：**27/27，TP=26、FP=0、FN=0，precision=recall=F1=1.0**。
+  这是自建回归集，不是开放世界盲测；边界写在 `bench/EXTRACTION.md`。
+- 新增可选 LLM 抽取器 `src/graph-extract-llm.ts`：
+  `extractGraphWithLlm()` / `parseGraphResponse()` / `GRAPH_EXTRACT_SYSTEM_PROMPT`；
+  走 OpenAI 兼容 `/chat/completions`，容忍 ```json 围栏，逐条校验实体/关系，
+  代词与省略主语映射到 subject，脏数据跳过不拖垮整批。
+- `GraphOptions.llmExtract`（默认 false）、`GraphOptions.llmConfidence`（默认 0.8）；
+  `addAsync(input, { relationExtraction: "llm" | "rules" })`。
+  手动 `entities/relations` 永远优先；LLM 失败/空结果/未配置 model 自动回退规则，
+  `AddResult.note` 会写明“已回退规则”。
+- 新增 `test/graph-llm.test.ts` 10 个测试（注入 fetch，不打真网络）。
+
+**P1：百万级压测 + recall@k + 真实向量入口**
+- `scripts/bench-scale.mjs` 新增：
+  - `--recall`、`--recall-queries`、`--recall-k`：同一查询向量分别走 LSH 与精确全扫，
+    输出 `recall@10`、`recall@k`、两侧耗时；
+  - `perturb()`：给查询向量加 15% 确定性噪声；
+  - `--vectors <jsonl>`：真实向量入口，一行 `{"id","vec","content","subject","namespace"}`，
+    绕过 embedding API 直接入库；
+  - `--query-vectors <jsonl>`：真实查询向量；
+  - `--db <path>`：指定库路径。
+- 10k × 1536 实测：`recall@10=100.0%`、`recall@100=99.0%`；
+  LSH avg 152.7ms，精确全扫 avg 4,175.7ms（该数字与 100k 口径不一致，见 `bench/README.md` 待复核注记）。
+- 100k × 1536 冷缓存复测：`recall@10=100.0%`、`recall@100=99.3%`；
+  LSH avg 4.96s、精确全扫 avg 119.0s（与历史 298ms/10.9s 差一个数量级，是冷页缓存/磁盘压力导致，不是代码回归；见 bench 说明）。
+- **1M × 768 压测完成**（`.bench/scale-1000000-768.db`，5.7GB）：
+  写入 694.8s（约 1,439 条/s）；FTS-only avg 2.61s；vector-only avg 8.00s / **p50 3.56s** / p95 25.9s；
+  hybrid avg 13.41s / p50 6.26s；top-1 命中。
+- **1M 下暴露并修复两个真实性能问题**：
+  1. `vector_lsh` 精确桶命中 `LSH_PROBE_LIMIT=50k` 时，旧逻辑回退百万级精确全扫，
+     单次查询 2 分钟以上；改为直接对截断后的 5 万候选做精确重排（召回边界写进 README）。
+  2. `searchFtsOnce` 的 `memory_fts JOIN memories` 在 1M 下被 SQLite 选成
+     "先扫 100 万行 memories 再回查 FTS"，0 命中查询也要 24.7s；改为
+     `WITH f AS MATERIALIZED` 先算 FTS 命中集，0 命中降到 ~2ms，宽查询 ~2.4s。
+- 1M × 768 稳态查询从 **156s（修复前首查）→ 3.5s p50（修复后）**。
+
+**P2：可选向量索引适配层**
+- 新增 `VectorIndex` 接口（`src/vector-index.ts`）：
+  `search()` 返回 `null` = 不可用，回退 LSH；返回 `[]` = 可用但无候选，不退化成全扫。
+- 新增 `HnswVectorIndex`（`src/vector-index-hnsw.ts`，可选 `hnswlib-node`）。
+- 新增 `SqliteVecVectorIndex`（`src/vector-index-sqlite-vec.ts`，可选 `sqlite-vec` 或
+  用户提供 `extensionPath`；索引放独立内存库，不碰主库）。
+- `MembraneOptions.vectorIndex` 注入；`Storage` 在写入/删除时同步维护，
+  首次查询从 `embeddings` 全量重建；适配器抛错只影响本进程查询，写入不受影响。
+- 两者都**不进 `dependencies` / 不做 peerDependency 硬约束**；
+  缺包抛 `E_VECTOR_INDEX_UNAVAILABLE`，默认 LSH 完全不受影响。
+- 新增 `test/vector-index.test.ts` 8 个测试（假索引注入、空结果、回退、命名空间过滤、重启重建、删除同步、缺包报错）。
+- 文档：`适配配置/可选向量索引.md`；`DESIGN.md` 第 10 节已登记该可选依赖决策。
+
+**验证**：`npm test` = **19 文件 245/245 全绿**；`npm run build` 0 错误；`npm run eval:extract` 27/27。
+
+---
+
 ## v0.2.6 — 2026-11-20
 
 ### 安全修复（内部代码审查）+ 一批低危改进
@@ -49,7 +121,7 @@
 
 **记录在案（本轮不改，v0.3 候选）**：M-8（URL token 文档化）、M-9（"未来生效记忆"语义固化）、M-10（不可信来源抽取的投毒面声明）、M-16（engines >=24 取舍）。
 
-**验证**：`npm test` = **17 文件 227/227 全绿**（新增 purge 2 项 + server 安全回归 3 项）；`tsc` 0 错误。
+**验证**：`npm test` = **17 文件 245/245 全绿**（新增 purge 2 项 + server 安全回归 3 项）；`tsc` 0 错误。
 **影响文件**：src/server.ts、src/storage.ts、src/engine.ts、src/mcp.ts、src/cli.ts、src/graph-extract.ts、src/tokenize.ts、src/version.ts、package.json、test/server.test.ts、test/purge.test.ts（新增）、DESIGN.md
 
 ---
@@ -1205,3 +1277,4 @@ private rebuildCharIndexIfNeeded(): void { ... }
 
 **schema 版本仍是 1**：新增的表和列都用 `CREATE TABLE IF NOT EXISTS` /
 `ALTER TABLE ADD COLUMN` 处理，不需要手动迁移，也不会因为版本号不匹配而拒绝启动。
+

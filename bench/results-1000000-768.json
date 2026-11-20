@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-11-20T01:20:01.185Z",
+  "source": "synthetic",
+  "namespace": "bench",
+  "count": 1000000,
+  "dim": 768,
+  "queries": 5,
+  "exactVectorSearch": false,
+  "recall": null,
+  "seedSeconds": 0,
+  "seedPerSecond": null,
+  "dbBytes": 6022033408,
+  "ftsOnly": {
+    "avgMs": 2609.9220999999975,
+    "p50Ms": 2426.621299999999,
+    "p95Ms": 3533.2454999999973
+  },
+  "vectorOnly": {
+    "avgMs": 8001.09332,
+    "p50Ms": 3556.789499999999,
+    "p95Ms": 25897.475000000006,
+    "top1Hit": true
+  },
+  "hybrid": {
+    "avgMs": 13414.295919999986,
+    "p50Ms": 6257.473399999988,
+    "p95Ms": 25071.9565
+  },
+  "rssBytes": 281210880
+}

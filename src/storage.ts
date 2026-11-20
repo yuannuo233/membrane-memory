@@ -27,6 +27,7 @@ import type {
   MembraneStats,
   Relation,
 } from "./types.js";
+import type { VectorIndex } from "./vector-index.js";
 
 /** 当前 schema 版本：表结构变更时递增并写迁移逻辑。v2 新增图检索三表 + MCP 客户端登记表（纯加法） */
 const SCHEMA_VERSION = 2;
@@ -263,11 +264,18 @@ export class Storage {
   private txDepth = 0;
   /** LSH 索引是否已确认可用（只查一次计数，避免每次查询都 COUNT） */
   private lshReady = false;
+  /** 可选外部向量索引（HNSW/sqlite-vec 适配器）；不传=默认 LSH */
+  private readonly vectorIndex?: VectorIndex;
+  /** 外部索引是否已按现有 embeddings 建好 */
+  private vectorIndexReady = false;
+  /** 外部索引是否失败（失败后本进程回退 LSH，不再反复报错） */
+  private vectorIndexFailed = false;
   /** 数据库文件路径（:memory: 表示内存库） */
   readonly path: string;
 
-  constructor(path: string) {
+  constructor(path: string, options: { vectorIndex?: VectorIndex } = {}) {
     this.path = path;
+    this.vectorIndex = options.vectorIndex;
     if (path !== ":memory:") {
       // 数据库所在目录不存在则创建（例如首次在 ./data/ 下建库）
       const dir = dirname(path);
@@ -654,8 +662,8 @@ export class Storage {
   }
 
   private searchFtsOnce(matchExpr: string, options: FtsSearchOptions): FtsHit[] {
-    const where: string[] = ["memory_fts MATCH ?", "m.namespace = ?"];
-    const params: (string | number | null)[] = [matchExpr, options.namespace ?? "default"];
+    const where: string[] = ["m.namespace = ?"];
+    const params: (string | number | null)[] = [options.namespace ?? "default"];
     const temporal = memoryTemporalSql("m", options.asOf);
     where.push(temporal.sql);
     params.push(...temporal.params);
@@ -677,12 +685,21 @@ export class Storage {
     // 排序开销说明：FTS5 的 ORDER BY bm25 必须给每个命中行算分后建临时 B 树排序，
     // 无法提前终止（实测 10 万条、查询命中全部记忆时约 45-55 ms；命中几百条时 <1 ms）。
     // 这是 SQLite FTS5 的固有行为，不是本项目的 bug。
-    const sql = `SELECT m.*, bm25(memory_fts) AS _bm
-                 FROM memory_fts JOIN memories m ON m.rowid = memory_fts.rowid
+    // 1M 级实测发现：直接把 memory_fts 和 memories JOIN 在一起，SQLite 会先按
+    // namespace 扫 100 万行 memories，再逐行回查 FTS——查询词明明 0 命中也要 24 秒。
+    // 用 MATERIALIZED CTE 强制先算 FTS 命中集，再按 rowid 关联；0 命中降到 ~2ms，
+    // 全命中（宽查询）也不再把 namespace 表扫成驱动表。
+    const sql = `WITH f AS MATERIALIZED (
+                   SELECT rowid, bm25(memory_fts) AS _bm
+                   FROM memory_fts
+                   WHERE memory_fts MATCH ?
+                 )
+                 SELECT m.*, f._bm
+                 FROM f JOIN memories m ON m.rowid = f.rowid
                  WHERE ${where.join(" AND ")}
-                 ORDER BY _bm ASC
+                 ORDER BY f._bm ASC
                  LIMIT ?`;
-    const rows = this.stmt(sql).all(...params, options.limit);
+    const rows = this.stmt(sql).all(matchExpr, ...params, options.limit);
     return (rows as Row[]).map((row) => ({
       record: rowToRecord(row),
       bm25: Number(row["_bm"]),
@@ -755,6 +772,14 @@ export class Storage {
       `INSERT INTO embeddings (id, dim, vec, norm) VALUES (?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET dim = excluded.dim, vec = excluded.vec, norm = excluded.norm`,
     ).run(id, vec.length, blob, vectorNorm(vec));
+    // 可选外部索引：写入失败不影响 SQLite 主数据；下次查询会回退 LSH
+    if (this.vectorIndex && !this.vectorIndexFailed) {
+      try {
+        this.vectorIndex.upsert(id, vec);
+      } catch {
+        this.vectorIndexFailed = true;
+      }
+    }
     const buckets = lshBuckets(vec);
     for (let table = 0; table < LSH_TABLES; table++) {
       this.stmt(
@@ -786,6 +811,13 @@ export class Storage {
   deleteEmbedding(id: string): void {
     this.stmt(`DELETE FROM vector_lsh WHERE memory_id = ?`).run(id);
     this.stmt(`DELETE FROM embeddings WHERE id = ?`).run(id);
+    if (this.vectorIndex && !this.vectorIndexFailed) {
+      try {
+        this.vectorIndex.remove(id);
+      } catch {
+        this.vectorIndexFailed = true;
+      }
+    }
   }
 
   /**
@@ -1005,13 +1037,65 @@ export class Storage {
       return rows.map((r) => String(r._id));
     };
 
-    // 先探精确桶：10 万条时通常 3 千条左右，足够 top-K 精确重排。
+    // 先探精确桶。桶很大时 SQL 会截断到 LSH_PROBE_LIMIT；这 5 万条仍是
+    // "同一个 LSH 桶"的随机子集，足够 top-K 重排，**不要**因此回退到百万级全扫
+    // （1M × 768 实测全扫一次要几分钟，会把查询拖死）。
+    // 桶严重倾斜导致这里截断时，召回率会下降；需要严格对账/更高召回用
+    // exactVectorSearch 或可选 ANN 适配器（HNSW/sqlite-vec）。
     const exact = query(lshProbes(queryVec));
-    // 命中 LIMIT 说明桶分布严重不均，截断后的候选不可信 → 交给调用方精确全扫
-    if (exact.length >= LSH_PROBE_LIMIT) return [];
     if (exact.length >= 64) return exact;
     // 候选太少（小库或桶太偏）才扩到邻桶，避免为了省一点扫描量牺牲召回。
     return query(lshProbes(queryVec, true));
+  }
+
+  /**
+   * 可选外部 ANN 索引的候选 id。
+   * 返回 null = 未配置/不可用，调用方回退 LSH；返回 [] = 索引可用但确实没候选。
+   */
+  annCandidateIds(options: VectorScanOptions, queryVec: Float32Array): string[] | null {
+    if (!this.vectorIndex || this.vectorIndexFailed) return null;
+    try {
+      this.ensureVectorIndex();
+      const ids = this.vectorIndex.search(queryVec, LSH_PROBE_LIMIT);
+      if (ids === null) return null;
+      if (ids.length === 0) return [];
+      return this.filterVectorCandidateIds(ids, options);
+    } catch {
+      // 可选索引坏了不能拖垮主流程；本进程后续都回退 LSH
+      this.vectorIndexFailed = true;
+      return null;
+    }
+  }
+
+  /** 首次使用外部索引时，按现有 embeddings 全量建一次（之后靠 upsert/delete 增量维护） */
+  private ensureVectorIndex(): void {
+    if (this.vectorIndexReady || !this.vectorIndex) return;
+    this.vectorIndex.clear?.();
+    const rows = this.stmt(`SELECT id, vec FROM embeddings`).all() as {
+      id: string;
+      vec: Uint8Array;
+    }[];
+    for (const row of rows) {
+      const vec = blobToVec(row.vec);
+      this.vectorIndex.upsert(String(row.id), vec);
+    }
+    this.vectorIndexReady = true;
+  }
+
+  /** 外部索引返回的是全库候选，必须再按 namespace/时间/kind/subject 过滤 */
+  private filterVectorCandidateIds(ids: string[], options: VectorScanOptions): string[] {
+    if (ids.length === 0) return [];
+    const filter = this.embeddingScanFilter(options);
+    const out: string[] = [];
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const rows = this.stmt(
+        `SELECT m.id AS _id FROM memories m
+         WHERE m.id IN (${chunk.map(() => "?").join(",")}) AND ${filter.where}`,
+      ).all(...chunk, ...filter.params) as { _id: string }[];
+      for (const row of rows) out.push(String(row._id));
+    }
+    return out;
   }
 
   /** 按 id 批量取向量 + 预计算范数（LSH 候选重排用，零拷贝视图） */

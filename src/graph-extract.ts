@@ -104,11 +104,13 @@ interface Rule {
 
 const SLOT_BODY = "[\\u4e00-\\u9fa5A-Za-z0-9·]{1,10}";
 const SLOT = `(${SLOT_BODY})`;
+/** 实体和谓词之间允许中文标点/空白（"张三，住在北京" 不该因为一个逗号漏抽） */
+const GAP = "[，,、；;\\s]*";
 
 const RULES: Rule[] = [
   // 用户住在北京 / 张三搬到杭州 / 公司位于深圳市南山区
   {
-    re: new RegExp(`${SLOT}(?:住在|居住在|搬到|搬到了|生活在|位于)${SLOT}`),
+    re: new RegExp(`${SLOT}${GAP}(?:住在|居住在|搬到|搬到了|生活在|位于)${GAP}${SLOT}`),
     aSlot: 1,
     bSlot: 2,
     predicate: "住在",
@@ -116,7 +118,7 @@ const RULES: Rule[] = [
   },
   // 用户在北京工作 / 张教授在清华大学任职 / 小李在北大读书
   {
-    re: new RegExp(`${SLOT}在${SLOT}(工作|上班|任职|就职|读书|上学|学习)`),
+    re: new RegExp(`${SLOT}${GAP}在${GAP}${SLOT}${GAP}(工作|上班|任职|就职|读书|上学|学习)`),
     aSlot: 1,
     bSlot: 2,
     predicate: { slot: 3, fallback: "工作于" },
@@ -124,7 +126,7 @@ const RULES: Rule[] = [
   // 张三是李四的同学 / 王经理是阿里巴巴的员工（A 是 B 的 X）
   {
     re: new RegExp(
-      `${SLOT}是${SLOT}的(同学|同事|朋友|老板|上司|下属|老师|学生|领导|客户|合伙人|妻子|丈夫|妈妈|爸爸|儿子|女儿|哥哥|姐姐|弟弟|妹妹|邻居|室友|员工)`,
+      `${SLOT}${GAP}是${GAP}${SLOT}${GAP}的${GAP}(同学|同事|朋友|老板|上司|下属|老师|学生|领导|客户|合伙人|妻子|丈夫|妈妈|爸爸|儿子|女儿|哥哥|姐姐|弟弟|妹妹|邻居|室友|员工)`,
     ),
     aSlot: 1,
     bSlot: 2,
@@ -133,15 +135,24 @@ const RULES: Rule[] = [
   // 张三的同学是李四（词序相反，方向仍是 张三 → 李四）
   {
     re: new RegExp(
-      `${SLOT}的(同学|同事|朋友|老板|上司|下属|老师|学生|领导|客户|合伙人|妻子|丈夫|妈妈|爸爸|儿子|女儿|哥哥|姐姐|弟弟|妹妹|邻居|室友|员工)(?:是|叫|名叫)${SLOT}`,
+      `${SLOT}${GAP}的${GAP}(同学|同事|朋友|老板|上司|下属|老师|学生|领导|客户|合伙人|妻子|丈夫|妈妈|爸爸|儿子|女儿|哥哥|姐姐|弟弟|妹妹|邻居|室友|员工)${GAP}(?:是|叫|名叫)${GAP}${SLOT}`,
     ),
     aSlot: 1,
     bSlot: 3,
     predicate: { slot: 2, fallback: "关联" },
   },
+  // 张三和李四是同学 / 张三、李四是同事（对称关系，方向按 A → B 记）
+  {
+    re: new RegExp(
+      `${SLOT}${GAP}(?:和|与|跟|同|、)${GAP}${SLOT}${GAP}(?<!不)(?:是|为)${GAP}(同学|同事|朋友|合伙人|邻居|室友)`,
+    ),
+    aSlot: 1,
+    bSlot: 2,
+    predicate: { slot: 3, fallback: "关联" },
+  },
   // 用户喜欢喝绿茶 / 张三爱打篮球
   {
-    re: new RegExp(`${SLOT}(?:喜欢|爱|热爱)${SLOT}`),
+    re: new RegExp(`${SLOT}${GAP}(?:喜欢|爱|热爱)${GAP}${SLOT}`),
     aSlot: 1,
     bSlot: 2,
     predicate: "喜欢",
@@ -149,7 +160,7 @@ const RULES: Rule[] = [
   },
   // 张三讨厌下雨天
   {
-    re: new RegExp(`${SLOT}讨厌${SLOT}`),
+    re: new RegExp(`${SLOT}${GAP}讨厌${GAP}${SLOT}`),
     aSlot: 1,
     bSlot: 2,
     predicate: "讨厌",
@@ -209,16 +220,25 @@ export function extractGraph(
     const re = new RegExp(rule.re.source, "g");
     for (const m of text.matchAll(re)) {
       const a = resolve(m[rule.aSlot] ?? "", rule.fromType);
-      const b = resolve(m[rule.bSlot] ?? "", rule.toType);
-      if (!a || !b || a.name === b.name) continue;
+      if (!a) continue;
       const predicate = resolvePredicate(rule, m);
       if (!predicate) continue;
-      const key = `${a.name}|${predicate}|${b.name}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      addEntity(a.name, a.type);
-      addEntity(b.name, b.type);
-      relations.push({ from: a.name, fromType: a.type, to: b.name, toType: b.type, predicate });
+      // 喜欢/讨厌的宾语可能是并列项："讨厌下雨天和堵车" → 两条关系，而不是一个怪名字
+      const rawB = m[rule.bSlot] ?? "";
+      const parts =
+        predicate === "喜欢" || predicate === "讨厌"
+          ? rawB.split(/[和与、]/).map((s) => s.trim()).filter(Boolean)
+          : [rawB];
+      for (const part of parts) {
+        const b = resolve(part, rule.toType);
+        if (!b || a.name === b.name) continue;
+        const key = `${a.name}|${predicate}|${b.name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        addEntity(a.name, a.type);
+        addEntity(b.name, b.type);
+        relations.push({ from: a.name, fromType: a.type, to: b.name, toType: b.type, predicate });
+      }
     }
   }
 
