@@ -13,6 +13,9 @@ data/
 *.db.log
 *.db.url
 
+## 吉祥物本地自定义图（用户自备，版权原因不上传；缺失时回退 web/assets/mascot.svg）
+web/assets/mascot-local.png
+
 ## IDE / OS
 .vs/
 .idea/

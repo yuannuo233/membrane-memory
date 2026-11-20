@@ -882,6 +882,19 @@ $('log-auto').addEventListener('change', e => {
 });
 $('btn-isolation').addEventListener('click', runIsolationProbe);
 
+// ---- 吉祥物（右下角，半透明、压低、不挡任何操作）----
+// 本地自定义优先：web/assets/mascot-local.png（被 .gitignore 忽略，不上传，用户自备图）；
+// 没有这张图就回退到内置的原创吉祥物 mascot.svg（记忆小水母，随仓库发布，无版权问题）。
+(() => {
+  const img = document.createElement('img');
+  img.className = 'mascot';
+  img.alt = '';
+  img.draggable = false;
+  img.src = 'assets/mascot-local.png';
+  img.onerror = () => { img.onerror = null; img.src = 'assets/mascot.svg'; };
+  document.body.appendChild(img);
+})();
+
 // ---- boot ----
 // 令牌只提示一次：?token=xxx 存进 localStorage，然后从地址栏抹掉，避免截图/日志泄露
 (() => {

@@ -1,12 +1,14 @@
 @echo off
 chcp 936 >nul
-title Membrane 记忆脑 - Web 控制台
+title Membrane 记忆脑
 setlocal enabledelayedexpansion
 
 REM ============================================================
-REM  Membrane 记忆脑 - Web 控制台
+REM  Membrane 记忆脑 - 一键启动（应用窗口版 v%VER%）
 REM  路径自动定位（%~dp0），不写死盘符
-REM  关闭此窗口 = 停止服务，不留后台进程
+REM  行为：服务已在跑 → 直接开应用窗口；没在跑 → 后台启动服务再开窗
+REM  应用窗口 = Edge --app 模式（无地址栏、独立窗口，像桌面软件）
+REM  停止服务：关闭任务栏里的 "Membrane 服务" 最小化窗口
 REM ============================================================
 
 set "MEMDIR=%~dp0"
@@ -14,6 +16,9 @@ if "%MEMDIR:~-1%"=="\" set "MEMDIR=%MEMDIR:~0,-1%"
 set "CLI=%MEMDIR%\dist\cli.js"
 set "DATADIR=%MEMDIR%\data"
 set "VER=未知"
+set "PORT=8317"
+set "URLFILE=%DATADIR%\membrane.db.url"
+set "HEALTH=http://127.0.0.1:%PORT%/api/health"
 
 REM ---------- 找 node ----------
 set "NODE="
@@ -57,22 +62,22 @@ if not exist "%CLI%" (
 REM ---------- 准备数据目录 ----------
 if not exist "%DATADIR%" mkdir "%DATADIR%"
 set "MEMBRANE_DB=%DATADIR%\membrane.db"
-set "MEMBRANE_PORT=8317"
 
 echo ============================================
-echo   Membrane 记忆脑 - Web 控制台  v%VER%
-echo ============================================
-echo.
-echo   数据库：%MEMBRANE_DB%
-echo   控制台：http://127.0.0.1:8317/
-echo.
-echo   提示：关闭此窗口即停止服务（不占后台内存）
+echo   Membrane 记忆脑  v%VER%
 echo ============================================
 echo.
 
-REM ---------- v0.2.7: wait for <db>.url, then open browser WITH token ----------
-set "URLFILE=%MEMBRANE_DB%.url"
+REM ---------- 服务已在运行？直接开应用窗口 ----------
+curl -s -o NUL -m 2 %HEALTH% >nul 2>nul
+if not errorlevel 1 goto reuse
+
+REM ---------- 后台启动服务（最小化窗口；关它即停服务） ----------
 if exist "%URLFILE%" del "%URLFILE%" >nul 2>&1
+start "Membrane 服务" /min "%NODE%" "%CLI%" serve
+echo   服务正在启动……
+
+REM ---------- 等服务写出带 token 的控制台地址（<db>.url） ----------
 set /a WAITED=0
 :waiturl
 if exist "%URLFILE%" goto openurl
@@ -80,16 +85,30 @@ if %WAITED% GEQ 20 goto openplain
 ping -n 2 127.0.0.1 >nul
 set /a WAITED+=1
 goto waiturl
+
+:reuse
+echo   检测到服务已在运行，直接打开应用窗口。
+
 :openurl
+if not exist "%URLFILE%" goto openplain
 set /p MURL=<"%URLFILE%"
-start "" "%MURL%"
-goto serve
+if "%MURL%"=="" goto openplain
+goto launch
+
 :openplain
-start "" /min cmd /c "timeout /t 2 >nul & start http://127.0.0.1:8317/"
-:serve
+set "MURL=http://127.0.0.1:%PORT%/"
 
-"%NODE%" "%CLI%" serve
-
-echo.
-echo   服务已停止。
-pause
+:launch
+REM ---------- Edge --app：无地址栏的独立应用窗口 ----------
+set "EDGE=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
+if not exist "%EDGE%" set "EDGE=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
+if exist "%EDGE%" (
+    start "" "%EDGE%" --app="%MURL%"
+) else (
+    start "" "%MURL%"
+)
+echo   应用窗口已打开
+echo   地址：%MURL%
+echo   停止服务：关闭任务栏里的 "Membrane 服务" 最小化窗口
+ping -n 5 127.0.0.1 >nul
+exit /b 0

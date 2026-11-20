@@ -27,7 +27,10 @@
   },
   "files": [
     "dist/",
-    "web/",
+    "web/index.html",
+    "web/app.css",
+    "web/app.js",
+    "web/assets/mascot.svg",
     "README.md",
     "README.en.md",
     "使用场景.md",

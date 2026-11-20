@@ -108,6 +108,23 @@
 recall 超大 limit 钳制、link 幂等、mem0 双斜杠/health 免鉴权/Bearer 大小写扩展断言）；
 `npm run build` 0 错误；`npm run check` 通过；`npm run eval:extract` 27/27。
 
+### 应用窗口启动器 + 吉祥物机制（2026-11-21 凌晨）
+
+- **`启动控制台.bat` 升级为"应用窗口版"**：服务已在跑 → 直接开窗（curl 探活 `/api/health`，
+  免鉴权修复正好用上）；没在跑 → 后台最小化窗口启动服务 → 等 `<db>.url` 写出 →
+  用 **Edge `--app` 模式**打开（无地址栏、独立窗口，像桌面软件；Edge 不在时回退默认浏览器）。
+  停止服务 = 关闭任务栏"Membrane 服务"最小化窗口。`timeout` 改 `ping` 延时（重定向 stdin 兼容），
+  全文 CRLF（LF-only 会炸 cmd 解析器，实测踩坑后修复）。
+- **吉祥物机制**：右下角半透明立绘，`pointer-events:none` 不挡点击，z-index 低于弹窗/提示条。
+  本地自定义优先：`web/assets/mascot-local.png`（**.gitignore 忽略 + package.json files 白名单
+  收窄为 web 的四个具体文件**——双保险确保用户自备图不进 git/npm 包，无版权风险）；
+  缺失时回退随仓库发布的**原创吉祥物** `web/assets/mascot.svg`（记忆小水母，MIT）。
+- 桌面快捷方式（`E:\Desktop\Membrane 记忆脑.lnk`，membrane.ico 图标）由脚本生成，指向仓库内启动器。
+
+**验证**：启动器端到端实测——冷启动/服务复用两分支均通过，`/api/health` 免鉴权探活、
+`/assets/mascot-local.png` 正常伺服；`npm pack --dry-run` 确认包内只有原创 mascot.svg；
+`npm test` 仍为 249/249 全绿（本节无代码逻辑改动，仅 web 静态资源与启动脚本）。
+
 ---
 
 ## v0.2.6 — 2026-11-20
