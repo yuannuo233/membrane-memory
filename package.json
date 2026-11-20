@@ -30,6 +30,7 @@
     "web/index.html",
     "web/app.css",
     "web/app.js",
+    "web/assets/favicon.ico",
     "web/assets/mascot.svg",
     "README.md",
     "README.en.md",
