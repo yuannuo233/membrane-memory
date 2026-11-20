@@ -29,7 +29,9 @@ export const DEFAULT_HALF_LIVES: Record<MemoryKind, number> = {
 };
 
 /**
- * 冲突检测阈值（DESIGN.md 第 5 节）：用 bigram 包含系数 |A∩B|/min(|A|,|B|) 判定。
+ * 冲突检测阈值（DESIGN.md 第 5 节）：用 bigram 归一化重叠度 |A∩B|/max(|A|,|B|) 判定
+ * （tokenOverlap；2026-11-20 校准——弃用旧的"包含系数 |A∩B|/min"，它非对称，
+ * 短句完整覆盖在长句里会得满分，等于让碎片取代完整事实）。
  * high 以上取代、mid~high 并存、mid 以下视为不同记忆。
  */
 export const DEFAULT_CONFLICT_THRESHOLDS: {

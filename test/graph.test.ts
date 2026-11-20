@@ -168,6 +168,16 @@ describe("关系查询：回答『谁和谁什么关系』", () => {
     expect(rel.sentence).toBe("王五 与 赵六：同事");
     expect(m.relations("王五", "赵六")).toHaveLength(1);
   });
+
+  it("link() 幂等：重复建立同一关系不产生重复边，反方向不算同一条（v0.2.7）", () => {
+    m.link({ from: "孙七", to: "周八", predicate: "朋友" });
+    m.link({ from: "孙七", to: "周八", predicate: "朋友" });
+    m.link({ from: "孙七", to: "周八", predicate: "朋友" });
+    expect(m.relations("孙七")).toHaveLength(1);
+    // 方向敏感：李四→张三是另一条边
+    m.link({ from: "周八", to: "孙七", predicate: "朋友" });
+    expect(m.relations("孙七")).toHaveLength(2);
+  });
 });
 
 describe("关系的时间感知与生命周期", () => {

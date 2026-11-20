@@ -77,7 +77,36 @@
 - 新增 `test/vector-index.test.ts` 8 个测试（假索引注入、空结果、回退、命名空间过滤、重启重建、删除同步、缺包报错）。
 - 文档：`适配配置/可选向量索引.md`；`DESIGN.md` 第 10 节已登记该可选依赖决策。
 
-**验证**：`npm test` = **19 文件 245/245 全绿**；`npm run build` 0 错误；`npm run eval:extract` 27/27。
+### 找 bug 轮修复（2026-11-20 晚，全量源码审查 + 实测复现）
+
+> 主智能体通读全部源码（src 24 文件 + web + bat + 打包配置），逐条实测复现后修复。
+> 另有两点文档级修复（相似度公式口径、health 免鉴权承诺落地）。
+
+- **mem0 兼容端点尾斜杠**：`POST /v1/memories`（不带斜杠）与 `POST /v1/memories/search/`（带斜杠）
+  此前都 404——mem0 官方习惯带尾斜杠，drop-in 兼容面缺了一半。现在两种写法都接受（src/server.ts）。
+- **/api/health 免鉴权落地**：DESIGN.md 第 9 节与多处注释承诺"health 免鉴权仅探活"，
+  但实现把所有 /api/* 都拦在令牌后（实测 401，与文档矛盾）。现在 GET /api/health 豁免鉴权
+  （只返回版本号，无数据），探活/监控可用；其余数据接口仍然一律要令牌（src/server.ts）。
+- **Bearer scheme 大小写不敏感**（RFC 7235）：`bearer xxx` 此前被拒（401），现在放行（src/server.ts）。
+- **Storage.getMany 真分批**：注释称"按 400 一批切分"但实现没切，4 万个 id 直接
+  `too many SQL variables` 抛错。触发链 = REST recall 的 limit 无上限 × 大库 × 模糊兜底路。
+  现在真正按 400 分批，且 `recall` 的 limit 钳制 ≤1000 双保险（src/storage.ts、src/engine.ts）。
+- **add() 去重/冲突检测挪进写锁**：此前在事务外读、事务内写——MCP 是"每个客户端一个进程"，
+  两进程并发 add 相同内容会"都读到没有重复 → 双写"。现在整体在一个 BEGIN IMMEDIATE 里，竞态消失（src/engine.ts）。
+- **link() 幂等**：同一对实体同一谓词的现行关系重复建立不再产生重复边（方向敏感：
+  张三→李四 ≠ 李四→张三）；新增 `Storage.findRelation`（src/engine.ts、src/storage.ts）。
+- **web/app.js**：location.hash 直接拼进 querySelector 会被当 CSS 语法抛异常，套 `CSS.escape()`。
+- **启动控制台.bat**：服务启动后把带 token 的控制台地址写到 `<db>.url`，
+  脚本等文件出现后直接用完整地址开浏览器——新用户双击即可进控制台，不用手工复制 ?token=
+  （`*.db.url` 已加入 .gitignore；文件与数据库同目录，同一信任边界）。
+- **命令行.bat**：输入含未配对引号时 `if "%cmd%"` 比较会语法报错，改用延迟展开 `!cmd!` 比较。
+- **文档口径校准**：DESIGN.md 第 4 节 / llms.txt / config.ts 注释把相似度从
+  `|A∩B|/min`（包含系数）更正为现行实现 `|A∩B|/max`（归一化重叠 tokenOverlap），
+  并写明弃用理由；文档数字 245 → 249 全部同步（npm run check 通过）。
+
+**验证**：`npm test` = **19 文件 249/249 全绿**（新增回归测试 4 项：getMany 大批量、
+recall 超大 limit 钳制、link 幂等、mem0 双斜杠/health 免鉴权/Bearer 大小写扩展断言）；
+`npm run build` 0 错误；`npm run check` 通过；`npm run eval:extract` 27/27。
 
 ---
 

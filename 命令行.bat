@@ -77,8 +77,8 @@ echo.
 :loop
 set "cmd="
 set /p "cmd=¼ÇÒäÄÔ> "
-if /i "%cmd%"=="exit" goto :eof
-if "%cmd%"=="" goto loop
+if /i "!cmd!"=="exit" goto :eof
+if "!cmd!"=="" goto loop
 "%NODE%" "%CLI%" %cmd%
 echo.
 goto loop

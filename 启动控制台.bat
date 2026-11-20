@@ -70,7 +70,23 @@ echo   提示：关闭此窗口即停止服务（不占后台内存）
 echo ============================================
 echo.
 
+REM ---------- v0.2.7: wait for <db>.url, then open browser WITH token ----------
+set "URLFILE=%MEMBRANE_DB%.url"
+if exist "%URLFILE%" del "%URLFILE%" >nul 2>&1
+set /a WAITED=0
+:waiturl
+if exist "%URLFILE%" goto openurl
+if %WAITED% GEQ 20 goto openplain
+ping -n 2 127.0.0.1 >nul
+set /a WAITED+=1
+goto waiturl
+:openurl
+set /p MURL=<"%URLFILE%"
+start "" "%MURL%"
+goto serve
+:openplain
 start "" /min cmd /c "timeout /t 2 >nul & start http://127.0.0.1:8317/"
+:serve
 
 "%NODE%" "%CLI%" serve
 

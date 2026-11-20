@@ -265,3 +265,20 @@ describe("多进程并发写（busy_timeout 保障）", () => {
     }
   });
 });
+
+describe("召回上限（v0.2.7 找bug轮）", () => {
+  it("recall 超大 limit 被钳制到 1000 且不炸", () => {
+    for (let i = 0; i < 5; i++) {
+      m.add({ content: `批量测试记忆${i} 在北京`, subject: "用户" });
+    }
+    const hits = m.recall({ query: "北京", limit: 1_000_000 });
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.length).toBeLessThanOrEqual(5);
+  });
+
+  it("0/负数 limit 仍回落默认 8", () => {
+    m.add({ content: "用户住在杭州", subject: "用户" });
+    const hits = m.recall({ query: "杭州", limit: -3 });
+    expect(hits.length).toBe(1);
+  });
+});

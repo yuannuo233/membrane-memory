@@ -239,44 +239,50 @@ export class Membrane {
     const norm = normalizeAddInput(input, { at: this.now(), source: null });
     const at = norm.at;
     const ns = normalizeNamespace(input.namespace);
-
-    // 1) 完全相同去重：同 contentKey + 同 subject + 同 kind（同一命名空间内）
-    const current = this.storage.currentBySubjectKind(norm.subject, norm.kind, ns);
-    const dup = current.find((m) => contentKey(m.content) === contentKey(norm.content));
-    if (dup) {
-      return {
-        status: "duplicate" as AddStatus,
-        memory: dup,
-        superseded: [],
-        keptBoth: [],
-        note: `与已有记忆 ${dup.id} 内容完全相同，未重复写入。`,
-      };
-    }
-
-    // 2) 冲突检测：bigram 包含系数（无 LLM / 无向量依赖，确定性）
-    const conflicts = this.detectConflicts(norm.content, current);
-    const { high, mid, pinned: pinnedConflict } = conflicts;
-    if (this.cfg.conflictPolicy === "error" && (high.length > 0 || mid.length > 0)) {
-      throw new MembraneError(
-        "E_CONFLICT",
-        `检测到相似记忆（${[...high, ...mid].map((m) => m.id).join(", ")}），策略为 error，未写入。`,
-      );
-    }
-
-    // 3) 向量预备：只校验维度一致性，真正落库在事务里
     const vec = normalizeVec(input.vec);
-    const embeddingStatus = this.embeddingPlan(vec);
 
-    // 4) 构造新记忆
-    const rec = this.buildRecord(norm, ns, at);
+    let pinnedConflict: MemoryRecord[] = [];
+    // 去重/冲突检测都放进写锁（BEGIN IMMEDIATE）里读：MCP 是"每个 AI 客户端一个进程"，
+    // 两个进程同时 add 相同内容时，事务外读会出现"都读到没有重复 → 双写"的竞态。
+    // 读在写锁内 = 读到的必然是最新提交，竞态消失（v0.2.7 找bug轮修复）。
+    // 回调直接返回 AddResult（而不是写外层变量）：TypeScript 不追踪闭包内的赋值，
+    // 让 transaction<T> 的泛型把结果带出来，类型流才是通的。
+    const result = this.storage.transaction((): AddResult => {
+      // 1) 完全相同去重：同 contentKey + 同 subject + 同 kind（同一命名空间内）
+      const current = this.storage.currentBySubjectKind(norm.subject, norm.kind, ns);
+      const dup = current.find((m) => contentKey(m.content) === contentKey(norm.content));
+      if (dup) {
+        return {
+          status: "duplicate",
+          memory: dup,
+          superseded: [],
+          keptBoth: [],
+          note: `与已有记忆 ${dup.id} 内容完全相同，未重复写入。`,
+        };
+      }
 
-    const supersededList: MemoryRecord[] = [];
-    const keptBothList: MemoryRecord[] = [];
-    let status: AddStatus = "created";
-    let note = "新记忆已写入。";
-    let relationViews: RelationView[] = [];
+      // 2) 冲突检测：bigram 重叠度（无 LLM / 无向量依赖，确定性）
+      const conflicts = this.detectConflicts(norm.content, current);
+      const { high, mid, pinned: pinnedNow } = conflicts;
+      pinnedConflict = pinnedNow;
+      if (this.cfg.conflictPolicy === "error" && (high.length > 0 || mid.length > 0)) {
+        throw new MembraneError(
+          "E_CONFLICT",
+          `检测到相似记忆（${[...high, ...mid].map((m) => m.id).join(", ")}），策略为 error，未写入。`,
+        );
+      }
 
-    this.storage.transaction(() => {
+      // 3) 向量维度守卫（已在事务内，读 embeddings 最新状态）
+      const embeddingStatus = this.embeddingPlan(vec);
+
+      // 4) 构造并写入（insert/upsertEmbedding 的内层事务自动降级为 SAVEPOINT）
+      const rec = this.buildRecord(norm, ns, at);
+      const supersededList: MemoryRecord[] = [];
+      const keptBothList: MemoryRecord[] = [];
+      let status: AddStatus = "created";
+      let note = "新记忆已写入。";
+      let relationViews: RelationView[] = [];
+
       this.storage.insert(rec);
       if (embeddingStatus === "stored" && vec) this.storage.upsertEmbedding(rec.id, vec);
       if (input.evidence && input.evidence.length > 0) {
@@ -305,24 +311,25 @@ export class Membrane {
       keptBothList.push(...applied.keptBoth);
       status = applied.status;
       note = applied.note;
+
+      return {
+        status,
+        memory: rec,
+        superseded: supersededList,
+        keptBoth: keptBothList,
+        note,
+        embeddingStatus,
+        relations: relationViews,
+      };
     });
 
-    if (embeddingStatus === "skipped") {
-      note += ` ⚠️ 传入的向量维度（${vec?.length}）与库内已有向量不一致，已跳过落库（请勿混用两套 embedding 模型）。`;
+    if (result.embeddingStatus === "skipped") {
+      result.note += ` ⚠️ 传入的向量维度（${vec?.length}）与库内已有向量不一致，已跳过落库（请勿混用两套 embedding 模型）。`;
     }
     if (pinnedConflict.length > 0) {
-      note += ` ⚠️ 与钉选记忆冲突（${pinnedConflict.map((m) => m.id).join(", ")}），未自动取代，请人工处理。`;
+      result.note += ` ⚠️ 与钉选记忆冲突（${pinnedConflict.map((m) => m.id).join(", ")}），未自动取代，请人工处理。`;
     }
-
-    return {
-      status,
-      memory: rec,
-      superseded: supersededList,
-      keptBoth: keptBothList,
-      note,
-      embeddingStatus,
-      relations: relationViews,
-    };
+    return result;
   }
 
   /**
@@ -531,11 +538,18 @@ export class Membrane {
     const toName = normalizeEntityName(input.to, "关系终点");
     const fromEnt = this.ensureEntity(fromName, normalizeEntityType(input.fromType), ns, at, cache);
     const toEnt = this.ensureEntity(toName, normalizeEntityType(input.toType), ns, at, cache);
+    const predicate = normalizePredicate(input.predicate);
+    // 幂等（v0.2.7）：同一对实体同一谓词的现行关系已存在时直接返回既有边，
+    // 重复标注不产生重复边把图越标越乱。方向敏感：张三→李四 ≠ 李四→张三。
+    const existing = this.storage.findRelation(fromEnt.id, toEnt.id, predicate, ns);
+    if (existing) {
+      return this.relationView(existing, fromEnt.name, toEnt.name, 1, fromEnt.type, toEnt.type);
+    }
     const rel: Relation = {
       id: this.newId(at),
       fromId: fromEnt.id,
       toId: toEnt.id,
-      predicate: normalizePredicate(input.predicate),
+      predicate,
       memoryId: input.memoryId ?? null,
       confidence: input.confidence === undefined ? 1 : Math.min(1, Math.max(0, input.confidence)),
       validFrom: at,
@@ -1096,7 +1110,12 @@ export class Membrane {
    * 所以分数上界恒为 1.0，跨库/跨配置可比。
    */
   recall(options: RecallOptions): RecallHit[] {
-    const limit = options.limit && options.limit > 0 ? options.limit : 8;
+    // limit 钳制 ≤1000（v0.2.7）：候选池 = limit×candidateFactor、模糊兜底再 ×10——
+    // 无上限的 limit 会把候选扫描与批量取数撑到不可用（第二道闸；getMany 本身已分批）
+    const limit = Math.min(
+      options.limit && options.limit > 0 ? Math.floor(options.limit) : 8,
+      1000,
+    );
     const now = options.asOf ?? this.now();
     const poolSize = limit * this.cfg.candidateFactor;
     const ns = normalizeNamespace(options.namespace);

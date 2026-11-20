@@ -233,17 +233,26 @@ describe("REST API", () => {
       expect(page.status).toBe(200);
       expect(await page.text()).toContain("Membrane");
 
-      // 数据接口无 token → 401
-      const denied = await fetch(`${base}/api/health`);
+      // 数据接口无 token → 401（/api/health 是唯一豁免，专供探活）
+      const denied = await fetch(`${base}/api/stats`);
       expect(denied.status).toBe(401);
 
-      // Bearer 头与 ?token= 两种方式都放行
-      const byHeader = await fetch(`${base}/api/health`, {
+      // health 免鉴权（v0.2.7 落地 DESIGN.md 承诺）：无 token 可探活，且不暴露数据库路径
+      const health = await fetch(`${base}/api/health`);
+      expect(health.status).toBe(200);
+      expect(await health.text()).not.toContain("membrane.db");
+
+      // Bearer 头与 ?token= 两种方式都放行；scheme 大小写不敏感（RFC 7235，v0.2.7 修复）
+      const byHeader = await fetch(`${base}/api/stats`, {
         headers: { Authorization: "Bearer secret-token" },
       });
       expect(byHeader.status).toBe(200);
-      const byQuery = await fetch(`${base}/api/health?token=secret-token`);
+      const byQuery = await fetch(`${base}/api/stats?token=secret-token`);
       expect(byQuery.status).toBe(200);
+      const byLower = await fetch(`${base}/api/stats`, {
+        headers: { Authorization: "bearer secret-token" },
+      });
+      expect(byLower.status).toBe(200);
 
       // CORS 预检不需要 token；但审查修复（M-1）后默认**零 CORS 头**——
       // 跨源放行必须显式配置 corsOrigin，绝不反射任意来源
@@ -339,11 +348,15 @@ describe("REST API", () => {
     expect((ev.body as { quote: string }[]).length).toBe(2);
   });
 
-  it("mem0 兼容路径 /v1/memories 与 /v1/memories/search 可用", async () => {
+  it("mem0 兼容路径：带/不带尾斜杠都接受（v0.2.7 修复 drop-in 兼容面）", async () => {
     const add = await r("POST", "/v1/memories/", { content: "兼容路径测试" });
     expect(add.status).toBe(201);
+    const add2 = await r("POST", "/v1/memories", { content: "兼容路径测试二" });
+    expect(add2.status).toBe(201);
     const rc = await r("POST", "/v1/memories/search", { query: "兼容" });
     expect((rc.body as { results: unknown[] }).results.length).toBeGreaterThan(0);
+    const rc2 = await r("POST", "/v1/memories/search/", { query: "兼容" });
+    expect((rc2.body as { results: unknown[] }).results.length).toBeGreaterThan(0);
   });
 
   it("forget 端点软删除", async () => {

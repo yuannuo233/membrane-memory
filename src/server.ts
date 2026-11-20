@@ -16,7 +16,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, extname, resolve, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Membrane, toBrief, toUltraBrief } from "./engine.js";
@@ -409,11 +409,12 @@ export async function route(
     };
   }
 
-  // mem0 兼容子集
-  if (method === "POST" && urlPath === "/v1/memories/") {
+  // mem0 兼容子集。mem0 官方 REST 习惯带尾斜杠（/v1/memories/），部分客户端不带——
+  // 两种写法都接受（v0.2.7 修复：此前一个只认带斜杠、一个只认不带，drop-in 兼容面缺了一半）
+  if (method === "POST" && (urlPath === "/v1/memories" || urlPath === "/v1/memories/")) {
     return route(engine, "POST", "/api/memories", body, webDir);
   }
-  if (method === "POST" && urlPath === "/v1/memories/search") {
+  if (method === "POST" && (urlPath === "/v1/memories/search" || urlPath === "/v1/memories/search/")) {
     return route(engine, "POST", "/api/recall", body, webDir);
   }
 
@@ -540,12 +541,22 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
         const u = new URL(req.url ?? "/", "http://localhost");
         // 只锁数据接口；静态控制台必须能先加载（浏览器要先拿到页面才能填 token）
         const isApiPath = u.pathname.startsWith("/api/") || u.pathname.startsWith("/v1/");
-        // 审查修复（M-1）：数据接口**一律要求令牌**（自动生成、无豁免）。
-        // 常量时间比较防时序侧信道；兼容 Bearer 头与 ?token= 两种来源。
-        if (isApiPath) {
+        // 审查修复（M-1）：数据接口**一律要求令牌**（自动生成）。
+        // 唯一豁免：GET /api/health——只返回版本号、无任何数据，专供探活/监控使用。
+        // 这是 DESIGN.md 第 9 节的既定意图，v0.2.7 落地（此前实现与文档矛盾，实测 401）。
+        // 常量时间比较防时序侧信道；兼容 Bearer 头与 ?token= 两种来源；
+        // Bearer scheme 大小写不敏感（RFC 7235，v0.2.7 修复）。
+        const isHealthProbe = method === "GET" && u.pathname === "/api/health";
+        if (isApiPath && !isHealthProbe) {
           const auth = req.headers["authorization"];
           const qToken = u.searchParams.get("token");
-          const provided = typeof auth === "string" ? auth : qToken ? `Bearer ${qToken}` : "";
+          let provided = "";
+          if (typeof auth === "string") {
+            const m = /^Bearer\s+(.+)$/i.exec(auth.trim());
+            if (m) provided = `Bearer ${m[1]}`;
+          } else if (qToken) {
+            provided = `Bearer ${qToken}`;
+          }
           if (!safeEqual(provided, `Bearer ${authToken}`)) {
             status = 401;
             logger.warn("http.auth_failed", { method, path: pathForLog });
@@ -604,6 +615,20 @@ export function startServer(engine: Membrane, opts: ServerOptions = {}): ReturnT
     console.log(`[membrane] 数据接口一律需要令牌（Bearer 头或 ?token=）；静态控制台免鉴权`);
     if (corsOrigin) console.log(`[membrane] 跨源放行 Origin：${corsOrigin}`);
     console.log(`[membrane] 运维后台：http://${displayHost}:${actualPort}/#ops（日志 ${logger.path ?? "memory only"}）`);
+    // 一键启动配套（v0.2.7）：把带令牌的完整控制台地址写到库文件旁（<db>.url），
+    // 启动脚本等它出现后直接用这个地址开浏览器——新用户不用再手工复制 ?token=。
+    // 文件与数据库同目录，同一个信任边界；写入失败不致命（控制台里仍有完整 URL）。
+    if (engine.storage.path !== ":memory:") {
+      try {
+        writeFileSync(
+          `${engine.storage.path}.url`,
+          `http://${displayHost}:${actualPort}/?token=${authToken}`,
+          "utf8",
+        );
+      } catch {
+        /* best effort */
+      }
+    }
   });
   // 审查修复（M-5）：端口占用等启动错误给中文提示，不再甩原始堆栈
   server.on("error", (err: NodeJS.ErrnoException) => {

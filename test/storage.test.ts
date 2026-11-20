@@ -106,6 +106,21 @@ describe("Storage：CRUD 与往返", () => {
   it("rowToRecord 对损坏的 tags JSON 降级为空数组（脏行不炸库）", () => {
     expect(rowToRecord({ id: "z", kind: "fact", content: "c", subject: null, tags: "{oops", confidence: 1, source: null, created_at: 1, updated_at: 1, valid_from: 1, valid_to: null, superseded_by: null, deleted: 0, pin: 0 }).tags).toEqual([]);
   });
+
+  it("getMany 大批量：405 条全取回 + 4 万个不存在的 id 不炸（v0.2.7 修复：真按 400 分批）", () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 405; i++) {
+      const rec = makeRec({ id: `bulk-${i}`, content: `批量记忆${i}` });
+      db.insert(rec);
+      ids.push(rec.id);
+    }
+    // 405 = 跨过 400 的分批边界；4 万个缺失 id 验证占位符不再超 SQLite 变量上限
+    const missing = Array.from({ length: 40_000 }, (_, i) => `missing-${i}`);
+    const got = db.getMany([...ids, ...missing]);
+    expect(got.size).toBe(405);
+    expect(got.get("bulk-0")?.content).toBe("批量记忆0");
+    expect(got.get("bulk-404")?.content).toBe("批量记忆404");
+  });
 });
 
 describe("Storage：FTS5 检索", () => {

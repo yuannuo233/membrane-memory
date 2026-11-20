@@ -166,10 +166,13 @@ CREATE TABLE mcp_clients (
 > **freshness（M4 修正）**：`freshness = exp(-ln2 · age_days / half_life)`——age=halfLife 时恰好 0.5，名副其实。
 > 旧版 `exp(-age/halfLife)` 在 age=halfLife 时是 1/e≈0.368（参数实为时间常数），已废弃。
 >
-> **相似度量（2026-11-19）**：无 embedding 时用 token 包含系数 `sim = |A∩B| / min(|A|,|B|)`（A/B 为
-> bigram 分词集）；有 embedding 时用余弦。取代带阈值：包含系数 ≥0.55 / 余弦 ≥0.85；并存带阈值：
-> 包含系数 ≥0.35 / 余弦 ≥0.60。选包含系数而非 Jaccard，是因为"用户住在北京"→"用户住在上海"这类
-> 换地名的改写 Jaccard 仅 ~0.43 会漏判冲突，包含系数 0.6 正确落入取代带（数据见 ingest 测试）。
+> **相似度量（2026-11-20 校准）**：无 embedding 时用归一化重叠度
+> `sim = |A∩B| / max(|A|,|B|)`（A/B 为 bigram 分词集，见 tokenize.ts 的 tokenOverlap）；
+> 有 embedding 时用余弦。取代带阈值：重叠度 ≥0.55 / 余弦 ≥0.85；并存带阈值：
+> 重叠度 ≥0.35 / 余弦 ≥0.60。
+> 为什么弃用包含系数 `|A∩B|/min`：它非对称——短句完整出现在长句里就得 1.0，
+> "北京市" 会以满分取代 "用户住在北京市海淀区"，等于用碎片覆盖完整事实。
+> 归一化重叠度下，"用户住在北京"→"用户住在上海" = 4/5 = 0.8，仍稳定落入取代带（数据见 ingest 测试）。
 >
 > **新鲜度默认半衰期**（按 kind，天数，可在构造 Membrane 时覆盖）：fact=90、episode=14、
 > preference=365、procedure=60。年龄从 `valid_from` 起算；`asOf` 查询时以 asOf 为"现在"。
@@ -308,7 +311,13 @@ CREATE TABLE mcp_clients (
   CORS 默认零放行（需要跨源用 MEMBRANE_CORS_ORIGIN 指定 Origin）；/api/health 不再暴露数据库路径；
   新增 `embed-purge`（换 embedding 模型后清理旧维度）；MCP 响应按请求顺序写回；
   证据计数按候选查询；若干注释/截断修正。详见 CHANGELOG v0.2.6。
-- 测试：**19 文件 245/245 全绿**；tsc 0 错误；npm pack 通过。
+- ✅ **v0.2.7 找 bug 轮（2026-11-20 晚）**：mem0 兼容端点带/不带尾斜杠都接受；**/api/health 免鉴权落地**
+  （此前实现与本节第 9 节承诺矛盾，实测 401，现豁免——只返回版本号）；Bearer scheme 大小写不敏感；
+  `Storage.getMany` 真按 400 分批 + `recall` limit 钳制 ≤1000；`add()` 的去重/冲突检测挪进写锁
+  （MCP 多客户端并发安全）；`link()` 幂等不产生重复边（新增 `Storage.findRelation`）；
+  `serve` 启动时把带 token 的控制台地址写到 `<db>.url` 供启动脚本一键打开；
+  第 4 节相似度量口径从"包含系数 min"校准为"归一化重叠 max"。详见 CHANGELOG v0.2.7 找 bug 轮小节。
+- 测试：**19 文件 249/249 全绿**；tsc 0 错误；npm pack 通过。
 
 ## 12. 交接规范（随时可交接的保证）
 

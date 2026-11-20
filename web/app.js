@@ -895,6 +895,7 @@ $('btn-isolation').addEventListener('click', runIsolationProbe);
 })();
 setLanguage(lang, false);
 const initialView = location.hash.slice(1);
-const initialBtn = initialView ? document.querySelector(`.nav-item[data-view="${initialView}"]`) : null;
+// CSS.escape：hash 是用户可控输入，直接拼进选择器会被当成 CSS 语法导致 querySelector 抛异常
+const initialBtn = initialView ? document.querySelector(`.nav-item[data-view="${CSS.escape(initialView)}"]`) : null;
 if (initialBtn) initialBtn.click();
 else showView('overview');

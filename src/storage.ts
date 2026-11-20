@@ -752,15 +752,20 @@ export class Storage {
     return rows.map((r) => ({ id: String(r.id), hits: Number(r.hits) }));
   }
 
-  /** 批量按 id 取记忆（模糊兜底用，避免 N+1） */
+  /** 批量按 id 取记忆（模糊兜底/向量重排/图路候选用，避免 N+1） */
   getMany(ids: string[]): Map<string, MemoryRecord> {
-    if (ids.length === 0) return new Map();
-    // SQLite 变量上限 32766（≥3.32，下同）：按 400 一批切分，宁多跑几次也不炸
-    const placeholders = ids.map(() => "?").join(",");
-    const rows = this.stmt(`SELECT * FROM memories WHERE id IN (${placeholders})`).all(
-      ...ids,
-    ) as Row[];
-    return new Map(rows.map((r) => [String(r["id"]), rowToRecord(r)]));
+    const out = new Map<string, MemoryRecord>();
+    if (ids.length === 0) return out;
+    // SQLite 变量上限 32766：**真正**按 400 一批切分。v0.2.7 修复——旧代码注释说分批
+    // 但实现没分，超大召回 limit + 大库会把一条 SQL 撑到 "too many SQL variables" 直接抛错
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const rows = this.stmt(`SELECT * FROM memories WHERE id IN (${chunk.map(() => "?").join(",")})`).all(
+        ...chunk,
+      ) as Row[];
+      for (const r of rows) out.set(String(r["id"]), rowToRecord(r));
+    }
+    return out;
   }
 
   // ---------- embeddings（向量缓存，可选） ----------
@@ -1174,6 +1179,25 @@ export class Storage {
       rel.validTo,
       rel.namespace,
     );
+  }
+
+  /**
+   * 查现行同向同谓词的关系（link 幂等去重用）；不存在返回 null。
+   * 方向敏感：张三→李四 ≠ 李四→张三（图是有向的，"谁和谁有关系"的无向语义在查询层）。
+   */
+  findRelation(
+    fromId: string,
+    toId: string,
+    predicate: string,
+    namespace = "default",
+  ): Relation | null {
+    const row = this.stmt(
+      `SELECT id, from_id, to_id, predicate, memory_id, confidence, valid_from, valid_to, namespace
+         FROM relations
+        WHERE namespace = ? AND from_id = ? AND to_id = ? AND predicate = ? AND valid_to IS NULL
+        LIMIT 1`,
+    ).get(namespace, fromId, toId, predicate) as Row | undefined;
+    return row ? rowToRelation(row) : null;
   }
 
   /**
