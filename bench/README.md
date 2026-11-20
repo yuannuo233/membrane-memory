@@ -125,7 +125,7 @@ node scripts/bench-scale.mjs --count 100000 --dim 1536 --queries 3 --reuse --kee
 node scripts/bench-scale.mjs --count 100000 --dim 1536 --queries 3 --reuse --keep-db --exact
 ```
 
-压测库写在仓库内 `.bench/`（已 gitignore），不会进 git。结果 JSON 也写在该目录，例如 `.bench/result-100000-1536-lsh.json`；本目录保留一份可直接查看的副本：`results-100000-lsh.json`、`results-100000-exact.json`、`results-10000-lsh.json`。
+压测库写在仓库内 `.bench/`（已 gitignore），不会进 git；测完可整目录删除，临时库不随仓库发布。结果 JSON 写在该目录，例如 `.bench/result-100000-1536-lsh.json`；本目录保留可直接查看的副本：`results-100000-lsh.json`、`results-100000-exact.json`、`results-10000-lsh.json`、`results-1000000-768.json`。本轮 1M 临时库（5.7GB）和诊断脚本已按用户要求清理。
 
 ## 优化前后
 
