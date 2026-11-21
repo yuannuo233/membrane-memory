@@ -30,9 +30,10 @@ Cline, Windsurf, Zed, AstrBot and any other MCP client. MIT licensed, self-hoste
 > `membrane-memory serve` (the optional web console) renders in one. Skip it and you lose
 > nothing functionally.
 
-> 🔴 **Honest disclosure (read this first)**: This is an early v0.2 project — solo-developed, 249 tests (verified live by CI), **no real-world users yet**.
+> 🔴 **Honest disclosure (read this first)**: This is **v0.2.7**, still pre-1.0 (APIs may change) — solo-developed, 249 tests (verified live by CI), **no real-world users yet**.
 > The [Known Limitations](#known-limitations-read-this-first) section below lists every weakness we have. Read it before deciding to use this.
 > We do **not** chase "number one on benchmarks" — that is exactly how comparable projects fell from grace.
+> See [CHANGELOG](CHANGELOG.md) for the current version and what changed in each release; the badge above is live.
 
 
 ---

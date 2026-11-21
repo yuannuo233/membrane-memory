@@ -169,6 +169,28 @@ for (const doc of DOCS) {
       problems.push(`${doc}: "当前版本" 写作 ${m[1]}，package.json 是 ${FACT.version}`);
     }
   }
+
+  // 6b) "这是 vX.Y 早期项目" / "This is an early vX.Y project" 这类**当前版本声明**
+  //
+  // 教训：README 曾写"这是 v0.2 早期项目"，而实际已到 v0.2.7。
+  // 上面的检查只认三段式 x.y.z，两段式的 v0.2 完全漏掉。
+  // 这里只抓"声明当前是什么版本"的句式，不碰"行为与 v0.1 一致"这类历史对照。
+  const CURRENT_CLAIM = [
+    /这是\s*\*{0,2}v?(\d+\.\d+(?:\.\d+)?)\*{0,2}\s*(?:早期)?项目/g,
+    /This is (?:an early )?\*{0,2}v?(\d+\.\d+(?:\.\d+)?)\*{0,2}(?:\s+project)?/gi,
+  ];
+  for (const re of CURRENT_CLAIM) {
+    for (const m of text.matchAll(re)) {
+      const claimed = m[1];
+      // 声明"当前是什么版本"必须写完整三段式且等于 package.json。
+      // 只写 v0.2 会让人以为停在 0.2.0——这正是用户投诉的那次。
+      if (claimed !== FACT.version) {
+        problems.push(
+          `${doc}: 声明"这是 v${claimed} 项目"，应写完整的 ${FACT.version}（"${m[0].trim()}"）`,
+        );
+      }
+    }
+  }
 }
 
 // 7) 启动脚本（.bat / .ps1 / .cmd）—— 最容易变成"没人管的孤儿文件"
